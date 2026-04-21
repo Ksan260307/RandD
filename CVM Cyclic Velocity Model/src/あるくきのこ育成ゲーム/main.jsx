@@ -6,7 +6,7 @@ const STATES = {
   BIRTH: 'Birth',
   GROWTH: 'Growth',
   MATURITY: 'Maturity',
-  MUTATION: 'Mutation', // 設計書 3.1 状態「X」の解放
+  MUTATION: 'Mutation', 
   DECLINE: 'Decline',
   DEATH: 'Death'
 };
@@ -20,12 +20,11 @@ const STATE_JP = {
   [STATES.DEATH]: '旅立ち（最大化）'
 };
 
-// 状態ごとの成長倍率
 const STATE_MULT = {
   [STATES.BIRTH]: 0.8,
   [STATES.GROWTH]: 1.5,
   [STATES.MATURITY]: 1.1,
-  [STATES.MUTATION]: 3.0, // 突然変異時は超高効率
+  [STATES.MUTATION]: 3.0, 
   [STATES.DECLINE]: 0.5,
   [STATES.DEATH]: 0
 };
@@ -34,7 +33,7 @@ const REC_VELOCITY = {
   [STATES.BIRTH]: '2〜4 (無理せず)',
   [STATES.GROWTH]: '6〜9 (ぐんぐん)',
   [STATES.MATURITY]: '4〜6 (安定)',
-  [STATES.MUTATION]: 'MAX!! (全力!!)', // 突然変異時の特殊レンジ
+  [STATES.MUTATION]: 'MAX!! (全力!!)', 
   [STATES.DECLINE]: '1〜3 (ゆっくり)'
 };
 
@@ -46,6 +45,10 @@ const WEATHER = {
 
 const L_MAX_BASE = 1000;
 const TICK_RATE = 50;
+
+// 円環描画用の定数
+const RING_RADIUS = 120;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 const App = () => {
   const [cycle, setCycle] = useState(1);
@@ -59,14 +62,15 @@ const App = () => {
   const [weather, setWeather] = useState(WEATHER.SUNNY);
   const [history, setHistory] = useState([]);
   
-  const [isMutated, setIsMutated] = useState(false); // 突然変異フラグ
-  const [isAutoMode, setIsAutoMode] = useState(false); // オートドライブ機能
+  const [isMutated, setIsMutated] = useState(false); 
+  const [isAutoMode, setIsAutoMode] = useState(false); 
   
   const [eventMessage, setEventMessage] = useState(null);
   const [clicks, setClicks] = useState([]);
   const startTimeRef = useRef(Date.now());
 
   const progress = Math.min((accumulation / lMax) * 100, 100);
+  const ringOffset = RING_CIRCUMFERENCE - (progress / 100) * RING_CIRCUMFERENCE;
 
   // --- 表示用数値の滑らかな追従 ---
   useEffect(() => {
@@ -88,8 +92,8 @@ const App = () => {
     if (isDead) return;
     const weatherTimer = setInterval(() => {
       const rand = Math.random();
-      if (rand < 0.3) setWeather(WEATHER.SUNNY);
-      else if (rand < 0.6) setWeather(WEATHER.CLOUDY);
+      if (rand < 0.35) setWeather(WEATHER.SUNNY);
+      else if (rand < 0.65) setWeather(WEATHER.CLOUDY);
       else setWeather(WEATHER.RAINY);
     }, 12000);
     return () => clearInterval(weatherTimer);
@@ -154,7 +158,6 @@ const App = () => {
       
       setAccumulation(prev => prev + growthDelta);
       
-      // V(t+1) = V(t) + Δ(S(t)) + ε
       const rand = Math.random();
       
       if (state === STATES.DECLINE) {
@@ -264,12 +267,29 @@ const App = () => {
     return `hue-rotate(${cycle * 45}deg) saturate(${100 + (cycle * 5)}%)`;
   }, [cycle, state, displayAcc]);
 
-  const ringRadius = 120;
-  const ringCircumference = 2 * Math.PI * ringRadius;
-  const ringOffset = ringCircumference - (progress / 100) * ringCircumference;
+  // 天候による背景グラデーションの切り替え
+  const weatherBackgroundClass = useMemo(() => {
+    if (isDead) return 'from-amber-100 to-orange-50';
+    switch (weather.id) {
+      case 'Sunny': return 'from-sky-200 to-emerald-100';
+      case 'Cloudy': return 'from-slate-300 to-slate-200';
+      case 'Rainy': return 'from-slate-600 to-slate-400';
+      default: return 'from-sky-100 to-emerald-50';
+    }
+  }, [weather.id, isDead]);
 
   const WeatherIcon = weather.icon;
   const currentEfficiency = useMemo(() => (STATE_MULT[state] * weather.mult).toFixed(1), [state, weather]);
+
+  // 雨粒の生成（Rainy用）
+  const raindrops = useMemo(() => {
+    return Array.from({ length: 15 }).map((_, i) => ({
+      id: i,
+      left: `${Math.random() * 100}%`,
+      animationDuration: `${Math.random() * 0.5 + 0.5}s`,
+      animationDelay: `${Math.random()}s`
+    }));
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 p-4 flex flex-col items-center select-none overflow-x-hidden font-sans pb-12">
@@ -288,33 +308,56 @@ const App = () => {
       </div>
 
       {/* Main Visual Stage */}
-      <div className={`relative w-full max-w-md aspect-square bg-gradient-to-b from-sky-100 to-emerald-50 rounded-[3rem] shadow-inner border-4 overflow-hidden flex items-center justify-center transition-all duration-1000 ${isDead ? 'border-amber-300 shadow-[inset_0_0_50px_rgba(251,191,36,0.4)]' : 'border-white'}`}>
+      <div className={`relative w-full max-w-md aspect-square bg-gradient-to-b ${weatherBackgroundClass} rounded-[3rem] shadow-inner border-4 overflow-hidden flex items-center justify-center transition-colors duration-1000 ${isDead ? 'border-amber-300 shadow-[inset_0_0_50px_rgba(251,191,36,0.4)]' : 'border-white'}`}>
         
-        {/* Weather Effect */}
-        <div className={`absolute inset-0 transition-opacity duration-1000 ${weather.id === 'Rainy' && !isDead ? 'bg-blue-900/15' : 'bg-transparent'}`}></div>
+        {/* Weather Graphics Layer (背景エフェクト) */}
+        <div className="absolute inset-0 overflow-hidden rounded-[3rem] pointer-events-none z-0">
+          {weather.id === 'Sunny' && !isDead && (
+            <div className="absolute -top-10 -right-10 w-48 h-48 bg-yellow-100/60 rounded-full blur-2xl animate-pulse"></div>
+          )}
+          {weather.id === 'Cloudy' && !isDead && (
+            <>
+              <div className="absolute top-12 left-[-30%] w-40 h-12 bg-white/40 rounded-full blur-md animate-[cloud-drift_15s_linear_infinite]"></div>
+              <div className="absolute top-28 left-[-50%] w-32 h-10 bg-white/30 rounded-full blur-sm animate-[cloud-drift_20s_linear_infinite_2s]"></div>
+            </>
+          )}
+          {weather.id === 'Rainy' && !isDead && (
+            <div className="absolute inset-0">
+               {raindrops.map((drop) => (
+                 <div key={drop.id} className="absolute w-0.5 h-6 bg-blue-100/50 rounded-full"
+                      style={{
+                        left: drop.left,
+                        top: `-20px`,
+                        animation: `rain-fall ${drop.animationDuration} linear infinite ${drop.animationDelay}`
+                      }} />
+               ))}
+               <div className="absolute inset-0 bg-blue-900/10 transition-opacity duration-1000"></div>
+            </div>
+          )}
+        </div>
 
         {/* ライフサイクル円環 (SVG Ring) */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none">
+        <div className="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none z-0">
           <svg className="w-[85%] h-[85%] -rotate-90 transform" viewBox="0 0 260 260">
-            <circle cx="130" cy="130" r={ringRadius} stroke="currentColor" strokeWidth="8" fill="none" className="text-slate-300" />
+            <circle cx="130" cy="130" r={RING_RADIUS} stroke="currentColor" strokeWidth="8" fill="none" className="text-slate-900/10" />
             
             {[15, 45, 75].map((percent) => {
               const angle = (percent / 100) * 360 * (Math.PI / 180);
-              const x = 130 + Math.cos(angle) * ringRadius;
-              const y = 130 + Math.sin(angle) * ringRadius;
-              const x2 = 130 + Math.cos(angle) * (ringRadius + 8);
-              const y2 = 130 + Math.sin(angle) * (ringRadius + 8);
+              const x = 130 + Math.cos(angle) * RING_RADIUS;
+              const y = 130 + Math.sin(angle) * RING_RADIUS;
+              const x2 = 130 + Math.cos(angle) * (RING_RADIUS + 8);
+              const y2 = 130 + Math.sin(angle) * (RING_RADIUS + 8);
               return (
-                <line key={percent} x1={x} y1={y} x2={x2} y2={y2} stroke="currentColor" strokeWidth="3" className="text-slate-500" />
+                <line key={percent} x1={x} y1={y} x2={x2} y2={y2} stroke="currentColor" strokeWidth="3" className="text-slate-900/20" />
               );
             })}
 
             <circle 
-              cx="130" cy="130" r={ringRadius} 
+              cx="130" cy="130" r={RING_RADIUS} 
               stroke="currentColor" strokeWidth="12" fill="none" 
               strokeLinecap="round"
               className={isDead ? "text-amber-500" : state === STATES.MUTATION ? "text-fuchsia-500" : "text-indigo-500 transition-all duration-300 ease-out"}
-              style={{ strokeDasharray: ringCircumference, strokeDashoffset: ringOffset }}
+              style={{ strokeDasharray: RING_CIRCUMFERENCE, strokeDashoffset: ringOffset }}
             />
           </svg>
         </div>
@@ -322,7 +365,7 @@ const App = () => {
         {/* Shadow */}
         {!isDead && (
           <div 
-            className="absolute bottom-[22%] w-24 h-4 bg-black/10 rounded-[100%] blur-md"
+            className={`absolute bottom-[22%] w-24 h-4 rounded-[100%] blur-md z-0 transition-colors duration-1000 ${weather.id === 'Rainy' ? 'bg-black/30' : 'bg-black/10'}`}
             style={{ animation: `shadow-pulse ${bobDuration} infinite alternate ease-in-out` }}
           />
         )}
@@ -366,11 +409,11 @@ const App = () => {
             <div className={`text-8xl filter drop-shadow-2xl relative z-20 transition-opacity duration-1000 ${isDead ? 'opacity-90' : 'opacity-100'}`}>
               {isDead ? '👻' : '🍄'}
               {isDead && (
-                <>
-                  <div className="absolute inset-0 bg-amber-200 blur-3xl rounded-full opacity-60 -z-10 animate-pulse"></div>
+                <div className="absolute inset-0 pointer-events-none -z-10">
+                  <div className="absolute inset-0 bg-amber-200 blur-3xl rounded-full opacity-60 animate-pulse"></div>
                   <div className="absolute inset-0 border-4 border-amber-400 rounded-full animate-[ping_2s_infinite]"></div>
                   <div className="absolute inset-0 border-2 border-yellow-200 rounded-full animate-[ping_3s_infinite_0.5s]"></div>
-                </>
+                </div>
               )}
               {state === STATES.MUTATION && !isDead && (
                 <div className="absolute inset-0 bg-fuchsia-400 blur-2xl rounded-full opacity-50 -z-10 animate-pulse"></div>
@@ -392,7 +435,7 @@ const App = () => {
         </div>
 
         {/* Status Badge & Environment */}
-        <div className="absolute top-6 left-6 flex flex-col gap-2">
+        <div className="absolute top-6 left-6 flex flex-col gap-2 z-20">
           <div className={`bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl border ${isDead ? 'border-amber-300' : state === STATES.MUTATION ? 'border-fuchsia-400' : 'border-white'} shadow-lg flex items-center gap-2 transition-colors`}>
             {state === STATES.DECLINE && <BatteryWarning size={14} className="text-rose-500 animate-pulse" />}
             {state === STATES.MUTATION && <Activity size={14} className="text-fuchsia-500 animate-bounce" />}
@@ -415,7 +458,7 @@ const App = () => {
 
         {/* Efficiency Indicator */}
         {!isDead && (
-           <div className="absolute bottom-6 right-6 bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-white shadow-sm flex flex-col items-center">
+           <div className="absolute bottom-6 right-6 bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-white shadow-sm flex flex-col items-center z-20">
              <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase tracking-tighter">
                <Activity size={10} /> 蓄積効率
              </span>
@@ -571,6 +614,18 @@ const App = () => {
         @keyframes float-up {
           0% { transform: translateY(0) scale(0.5); opacity: 1; }
           100% { transform: translateY(-40px) scale(1.2); opacity: 0; }
+        }
+        @keyframes cloud-drift {
+          0% { transform: translateX(0); opacity: 0; }
+          10% { opacity: 1; }
+          90% { opacity: 1; }
+          100% { transform: translateX(400px); opacity: 0; }
+        }
+        @keyframes rain-fall {
+          0% { transform: translateY(0) rotate(15deg); opacity: 0; }
+          20% { opacity: 1; }
+          80% { opacity: 1; }
+          100% { transform: translateY(300px) rotate(15deg); opacity: 0; }
         }
         input[type='range']::-webkit-slider-thumb {
           -webkit-appearance: none;
