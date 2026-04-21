@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TVD x 相対性理論: 時空観測シミュレーター</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #050510; color: #e2e8f0; font-family: 'Helvetica Neue', sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
+        .pointer-events-auto { pointer-events: auto; }
+        
+        /* Glassmorphism UI */
+        .glass-panel { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 1rem; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5); }
+        
+        /* Custom Slider */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 24px; width: 24px; border-radius: 50%; background: #ffffff; cursor: pointer; margin-top: -10px; box-shadow: 0 0 10px rgba(255,255,255,0.5); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: rgba(255, 255, 255, 0.2); border-radius: 2px; }
+        input[type=range]:focus { outline: none; }
+        
+        /* Time Display */
+        .time-font { font-family: monospace; font-size: 1.2rem; font-weight: bold; letter-spacing: 0.05em; }
+        .glitch { animation: glitch 0.2s linear infinite; }
+        @keyframes glitch {
+            0% { transform: translate(0) }
+            20% { transform: translate(-2px, 1px) }
+            40% { transform: translate(-1px, -1px) }
+            60% { transform: translate(2px, 1px) }
+            80% { transform: translate(1px, -1px) }
+            100% { transform: translate(0) }
+        }
+    </style>
+</head>
+<body>
+    <!-- 3D Canvas -->
+    <div id="canvas-container"></div>
+
+    <!-- UI Layer -->
+    <div id="ui-layer" class="p-4 sm:p-6 pb-8">
+        
+        <!-- Header & Time Status -->
+        <div class="glass-panel p-4 mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+                <h1 class="text-xl sm:text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">時空観測シミュレーター</h1>
+                <p class="text-xs text-slate-400 mt-1">TVD Core Logic v2.7 / Relativity Interpretation</p>
+            </div>
+            
+            <div class="flex gap-4 w-full sm:w-auto">
+                <div class="bg-slate-800/50 p-3 rounded-lg flex-1 border border-slate-700">
+                    <div class="text-xs text-slate-400 mb-1">宇宙標準時 (外部)</div>
+                    <div id="univ-time" class="time-font text-blue-300">00:00:00.00</div>
+                </div>
+                <div class="bg-slate-800/50 p-3 rounded-lg flex-1 border border-slate-700">
+                    <div class="text-xs text-slate-400 mb-1">あなたの時間 (船内)</div>
+                    <div id="local-time" class="time-font text-purple-300">00:00:00.00</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex-1"></div> <!-- Spacer -->
+
+        <!-- Control Panel -->
+        <div class="glass-panel p-5 pointer-events-auto w-full max-w-2xl mx-auto">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                <!-- Sliders -->
+                <div class="space-y-5">
+                    <!-- Drive Input -->
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-sm font-medium text-blue-300 flex items-center gap-2">
+                                <span>🚀 エンジン出力 (スピード)</span>
+                            </label>
+                        </div>
+                        <input type="range" id="slider-drive" min="-1" max="1" step="0.01" value="0">
+                        <div class="text-[10px] text-slate-500 text-right mt-1">光速への推進力</div>
+                    </div>
+                    
+                    <!-- Regulation Input -->
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-sm font-medium text-red-300 flex items-center gap-2">
+                                <span>🪐 接近中の天体質量 (重力)</span>
+                            </label>
+                        </div>
+                        <input type="range" id="slider-reg" min="-1" max="1" step="0.01" value="0">
+                        <div class="text-[10px] text-slate-500 text-right mt-1">時空を引き込む力</div>
+                    </div>
+
+                    <!-- Field Input -->
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-sm font-medium text-emerald-300 flex items-center gap-2">
+                                <span>🌌 宇宙環境のゆらぎ (外部ノイズ)</span>
+                            </label>
+                        </div>
+                        <input type="range" id="slider-env" min="-1" max="1" step="0.01" value="0">
+                    </div>
+                </div>
+
+                <!-- TVD Status Display -->
+                <div class="bg-slate-900/50 rounded-xl p-4 border border-slate-700/50 flex flex-col justify-center space-y-4">
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-slate-400">光速接近率 (Drive)</span>
+                            <span id="val-d" class="font-mono text-blue-400">0.00%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 rounded-full h-1.5"><div id="bar-d" class="bg-blue-500 h-1.5 rounded-full" style="width: 0%"></div></div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-slate-400">重力崩壊度 (Regulation)</span>
+                            <span id="val-r" class="font-mono text-red-400">0.00%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 rounded-full h-1.5"><div id="bar-r" class="bg-red-500 h-1.5 rounded-full" style="width: 0%"></div></div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-slate-400">時空の歪み (Field)</span>
+                            <span id="val-f" class="font-mono text-emerald-400">0.00%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 rounded-full h-1.5"><div id="bar-f" class="bg-emerald-500 h-1.5 rounded-full" style="width: 0%"></div></div>
+                    </div>
+                    <div class="pt-2 border-t border-slate-700/50">
+                        <div class="text-xs text-center text-slate-400">時間の遅れ係数</div>
+                        <div id="val-gamma" class="text-center font-mono text-xl text-yellow-300 mt-1">x 1.000</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * TVD (Triadic Velocity Dynamics) Engine v2.7
+         * 相対性理論モデル用カスタマイズ
+         */
+        class TVDEngine {
+            constructor() {
+                // 状態空間 [0, 1]
+                this.D = 0.05; // 初期推進力
+                this.R = 0.05; // 初期重力
+                this.F = 0.05; // 初期歪み
+                
+                // パラメータ
+                this.lambda = 0.5; // 構造的安定性
+                this.epsilon = 0.01; // 動的減衰
+                this.alpha = 0.15; // 入力の非線形係数
+            }
+
+            // ゲイン関数
+            G(v) {
+                return Math.exp(1.5 * (v - 0.5));
+            }
+
+            // 更新 (RK2ベースの簡易オイラー積分)
+            update(dt, inputD, inputR, inputEnv) {
+                // Field統合 (外部入力との合成)
+                const F_total = Math.min(1, Math.max(0, this.F + inputEnv * 0.2));
+
+                // ベロシティの簡易推定 (入力に基づく構造変化予測)
+                const vD = 0.5 + 0.5 * inputD;
+                const vR = 0.5 + 0.5 * inputR;
+                const vF = 0.5 + 0.5 * (inputD - inputR);
+
+                // 各要素の変化量 (コアロジック v2.7 準拠)
+                // D: 推進力。F(時空のハリ)があるほど進みやすいが、R(重力)に相殺される。
+                const dD = this.G(vD) * (F_total - this.R) - this.lambda * this.D * (1 - this.D) - this.epsilon * this.D * this.D + this.alpha * Math.tanh(inputD * 3);
+                
+                // R: 重力。D(質量/エネルギーの集中)があるほど強まるが、Fに相殺される。
+                const dR = this.G(vR) * (this.D - F_total) - this.lambda * this.R * (1 - this.R) - this.epsilon * this.R * this.R + this.alpha * Math.tanh(inputR * 3);
+                
+                // F: 歪み。D(推進)とR(重力)の摩擦・拮抗によって生じる。
+                const dF = this.G(vF) * (this.D - this.R)  - this.lambda * this.F * (1 - this.F) - this.epsilon * this.F * this.F;
+
+                // 状態更新
+                this.D += dD * dt;
+                this.R += dR * dt;
+                this.F += dF * dt;
+
+                // 境界制約 [0, 1]
+                this.D = Math.min(0.99, Math.max(0.01, this.D)); // 完全に0や1にならないよう微小な余白
+                this.R = Math.min(0.99, Math.max(0.01, this.R));
+                this.F = Math.min(0.99, Math.max(0.01, this.F));
+
+                return this.observe();
+            }
+
+            observe() {
+                return { D: this.D, R: this.R, F: this.F };
+            }
+        }
+
+        // ==========================================
+        // Three.js Visualization & UI Logic
+        // ==========================================
+        
+        let scene, camera, renderer;
+        let stars = [], blackHole, accretionDisk;
+        const tvd = new TVDEngine();
+        
+        // Time tracking
+        let universalTime = 0;
+        let localTime = 0;
+        let lastTime = performance.now();
+
+        init();
+        animate();
+
+        function init() {
+            // Three.js Setup
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x050510, 0.002);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.z = 400;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            // 1. Starfield (Driveの表現用)
+            const starGeo = new THREE.BufferGeometry();
+            const starCount = 3000;
+            const posArray = new Float32Array(starCount * 3);
+            
+            for(let i = 0; i < starCount * 3; i+=3) {
+                posArray[i] = (Math.random() - 0.5) * 1000;   // x
+                posArray[i+1] = (Math.random() - 0.5) * 1000; // y
+                posArray[i+2] = (Math.random() - 0.5) * 2000; // z
+            }
+            starGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+            
+            // 星の材質 (ワープ時に伸びるように見せるためのテクスチャや色調整)
+            const starMat = new THREE.PointsMaterial({
+                size: 2,
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending
+            });
+            const starSystem = new THREE.Points(starGeo, starMat);
+            scene.add(starSystem);
+            stars.push(starSystem);
+
+            // 2. Black Hole (Regulationの表現用)
+            const bhGeo = new THREE.SphereGeometry(1, 32, 32);
+            const bhMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            blackHole = new THREE.Mesh(bhGeo, bhMat);
+            blackHole.position.set(0, 0, -200);
+            scene.add(blackHole);
+
+            // 3. Accretion Disk (Fieldの表現用)
+            const diskGeo = new THREE.RingGeometry(1.2, 3, 64);
+            const diskMat = new THREE.MeshBasicMaterial({ 
+                color: 0xffaa00, 
+                side: THREE.DoubleSide, 
+                transparent: true, 
+                opacity: 0.6,
+                wireframe: true
+            });
+            accretionDisk = new THREE.Mesh(diskGeo, diskMat);
+            accretionDisk.position.copy(blackHole.position);
+            accretionDisk.rotation.x = Math.PI / 2.5;
+            scene.add(accretionDisk);
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function formatTime(ms) {
+            const totalSeconds = ms / 1000;
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = Math.floor(totalSeconds % 60);
+            const milliseconds = Math.floor((totalSeconds % 1) * 100);
+            return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(2, '0')}`;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Time delta
+            const now = performance.now();
+            let dt = (now - lastTime) / 1000; // in seconds
+            if(dt > 0.1) dt = 0.1; // limit dt for stability
+            lastTime = now;
+
+            // Get Inputs from UI
+            const inputD = parseFloat(document.getElementById('slider-drive').value);
+            const inputR = parseFloat(document.getElementById('slider-reg').value);
+            const inputEnv = parseFloat(document.getElementById('slider-env').value);
+
+            // 1. TVD Logic Update
+            // 内部ロジックは速い周期で回す
+            const state = tvd.update(dt * 2.0, inputD, inputR, inputEnv);
+            
+            // 2. Relativity Calculations (新解釈マッピング)
+            // D(スピード) と R(重力) が高いほど時間が遅れる
+            // 簡易的なローレンツ因子風の計算： γ = sqrt(1 - max(D, R)^2)
+            const maxForce = Math.max(state.D, state.R);
+            // 0にならないよう下限を設定(0.05) -> 最小で時間の進みは5%になる
+            const timeDilationFactor = Math.max(0.01, Math.sqrt(1 - Math.pow(maxForce, 2))); 
+
+            // 時計の更新
+            const realDtMs = dt * 1000;
+            universalTime += realDtMs; // 外部の時間はそのまま進む
+            localTime += realDtMs * timeDilationFactor; // 船内の時間は遅れる
+
+            // 3. Update UI
+            document.getElementById('univ-time').innerText = formatTime(universalTime);
+            
+            const localTimeEl = document.getElementById('local-time');
+            localTimeEl.innerText = formatTime(localTime);
+            // 時間の遅れが激しい時（歪みFが大きい時）UIをグリッチさせる
+            if(state.F > 0.7) {
+                localTimeEl.classList.add('glitch');
+            } else {
+                localTimeEl.classList.remove('glitch');
+            }
+
+            document.getElementById('val-d').innerText = (state.D * 100).toFixed(1) + '%';
+            document.getElementById('bar-d').style.width = (state.D * 100) + '%';
+            
+            document.getElementById('val-r').innerText = (state.R * 100).toFixed(1) + '%';
+            document.getElementById('bar-r').style.width = (state.R * 100) + '%';
+            
+            document.getElementById('val-f').innerText = (state.F * 100).toFixed(1) + '%';
+            document.getElementById('bar-f').style.width = (state.F * 100) + '%';
+
+            document.getElementById('val-gamma').innerText = 'x ' + timeDilationFactor.toFixed(4);
+            
+            // 色のフィードバック
+            document.getElementById('val-gamma').style.color = timeDilationFactor < 0.2 ? '#ef4444' : (timeDilationFactor < 0.6 ? '#f59e0b' : '#fde047');
+
+            // 4. Update 3D Scene Visuals based on DRF
+            
+            // [Drive] 星の移動速度とFOV（ワープ効果）
+            const speed = 200 * state.D; 
+            const positions = stars[0].geometry.attributes.position.array;
+            for(let i = 2; i < positions.length; i+=3) {
+                // Dによって前に進む
+                positions[i] += speed * dt * 60;
+                
+                // [Regulation] 重力による中心への引き込み
+                if(state.R > 0.1) {
+                    const x = positions[i-2];
+                    const y = positions[i-1];
+                    const distToCenter = Math.sqrt(x*x + y*y);
+                    const pull = state.R * 5 * (1000 / (distToCenter + 100)); // 中心に近いほど強く引く
+                    positions[i-2] -= (x / distToCenter) * pull * dt * 60;
+                    positions[i-1] -= (y / distToCenter) * pull * dt * 60;
+                }
+
+                // リセット処理
+                if(positions[i] > 400) {
+                    positions[i] = -1500;
+                    // 再配置時は画面全体にばらまく
+                    positions[i-2] = (Math.random() - 0.5) * 1500;
+                    positions[i-1] = (Math.random() - 0.5) * 1500;
+                }
+            }
+            stars[0].geometry.attributes.position.needsUpdate = true;
+            
+            // FOVの動的変更（スピード感）
+            const targetFOV = 60 + (state.D * 40);
+            camera.fov += (targetFOV - camera.fov) * 0.1;
+            
+            // 星の色（青方偏移のメタファー：Dが高いと青白く）
+            const r = 1.0 - (state.D * 0.5);
+            const g = 1.0 - (state.D * 0.2);
+            const b = 1.0;
+            stars[0].material.color.setRGB(r, g, b);
+
+            // [Regulation] ブラックホールのスケールと接近
+            const targetBHScale = 0.1 + (state.R * 60);
+            blackHole.scale.set(targetBHScale, targetBHScale, targetBHScale);
+            // 重力が強いとカメラがブラックホールに引き寄せられるような表現
+            camera.position.z = 400 - (state.R * 200);
+
+            // [Field] 降着円盤の歪み・回転速度
+            accretionDisk.scale.set(targetBHScale, targetBHScale, targetBHScale);
+            accretionDisk.rotation.z -= (0.01 + state.F * 0.2); // Fが高いほど激しく回転
+            accretionDisk.rotation.x = Math.PI / 2.5 + (Math.sin(now * 0.005) * state.F * 0.5); // Fによるぐらつき
+            // 円盤の色（Fが高いと赤っぽく危険な色に）
+            accretionDisk.material.color.setHSL(0.1 - (state.F * 0.1), 1.0, 0.5);
+
+            // 画面全体の揺れ (Fによる空間の不安定さ)
+            if(state.F > 0.5) {
+                const shake = (state.F - 0.5) * 5;
+                camera.position.x = (Math.random() - 0.5) * shake;
+                camera.position.y = (Math.random() - 0.5) * shake;
+            } else {
+                camera.position.x = 0;
+                camera.position.y = 0;
+            }
+
+            camera.updateProjectionMatrix();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
