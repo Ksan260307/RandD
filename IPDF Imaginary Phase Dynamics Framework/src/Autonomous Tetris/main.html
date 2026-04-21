@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>IPDF Autonomous Tetris</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #020617; color: #f8fafc; font-family: sans-serif; overflow: hidden; touch-action: none; }
+        .canvas-container { position: relative; box-shadow: 0 0 40px rgba(56, 189, 248, 0.2); }
+        .slider-custom { -webkit-appearance: none; height: 4px; background: #334155; border-radius: 2px; }
+        .slider-custom::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #38bdf8; cursor: pointer; border: 2px solid white; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        .ai-status-glow { animation: pulse-glow 2s infinite ease-in-out; }
+        @keyframes pulse-glow { 0%, 100% { opacity: 0.5; transform: scale(1); } 50% { opacity: 1; transform: scale(1.2); } }
+        .particle { position: absolute; pointer-events: none; border-radius: 50%; z-index: 100; }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-start min-h-screen p-2 select-none">
+
+    <!-- Header Stats -->
+    <div class="w-full max-w-md flex justify-between items-center px-4 pt-2 mb-2">
+        <div class="flex flex-col">
+            <span class="text-[9px] text-slate-500 uppercase tracking-widest">Decision Phase</span>
+            <div class="flex items-center gap-2">
+                <div class="ai-status-glow w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></div>
+                <span id="phaseDisplay" class="text-xs font-mono text-sky-400 font-bold uppercase tracking-tighter">Analyzing...</span>
+            </div>
+        </div>
+        <div class="text-right">
+            <span class="text-[9px] text-slate-500 uppercase tracking-widest">Score</span>
+            <div id="scoreDisplay" class="text-xl font-black text-white font-mono leading-none">0</div>
+        </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="w-full max-w-4xl flex flex-col md:flex-row gap-4 items-center justify-center">
+        
+        <!-- Game Layout -->
+        <div class="flex gap-2">
+            <!-- Left Side: Hold -->
+            <div class="flex flex-col gap-2 pt-4">
+                <div class="glass p-2 rounded-lg w-16 text-center border-l-2 border-sky-500">
+                    <div class="text-[8px] text-slate-400 uppercase font-bold mb-1">Hold</div>
+                    <canvas id="holdCanvas" width="48" height="48" class="mx-auto"></canvas>
+                </div>
+            </div>
+
+            <!-- Center: Main Board -->
+            <div class="canvas-container rounded-xl overflow-hidden border-2 border-slate-700 bg-slate-950">
+                <canvas id="mainCanvas" width="240" height="480"></canvas>
+                <div id="gameOver" class="absolute inset-0 flex flex-col items-center justify-center bg-black/80 hidden z-50">
+                    <div class="text-red-500 font-black text-xl mb-4 tracking-tighter">SYSTEM OVERLOAD</div>
+                    <div class="text-slate-400 text-[10px] uppercase">Re-initializing IPDF Core...</div>
+                </div>
+            </div>
+
+            <!-- Right Side: Next -->
+            <div class="flex flex-col gap-2 pt-4">
+                <div class="glass p-2 rounded-lg w-16 text-center border-r-2 border-sky-500">
+                    <div class="text-[8px] text-slate-400 uppercase font-bold mb-1">Next</div>
+                    <canvas id="nextCanvas" width="48" height="48" class="mx-auto"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Parameters & Control Panel (Restored and Responsive) -->
+    <div class="w-full max-w-md mt-4 glass p-4 rounded-2xl border border-slate-700/50">
+        <div class="grid grid-cols-2 gap-x-6 gap-y-4">
+            <!-- Lambda Risk -->
+            <div class="space-y-1">
+                <div class="flex justify-between items-end">
+                    <label class="text-[9px] font-bold text-slate-400 uppercase">λ Risk (危機回避)</label>
+                    <span id="labelRisk" class="text-xs font-mono text-sky-400">0.75</span>
+                </div>
+                <input type="range" id="paramRisk" min="0" max="100" value="75" class="w-full slider-custom">
+            </div>
+            <!-- Lambda Optionality -->
+            <div class="space-y-1">
+                <div class="flex justify-between items-end">
+                    <label class="text-[9px] font-bold text-slate-400 uppercase">λ Opt (柔軟性)</label>
+                    <span id="labelOpt" class="text-xs font-mono text-sky-400">0.40</span>
+                </div>
+                <input type="range" id="paramOpt" min="0" max="100" value="40" class="w-full slider-custom">
+            </div>
+            <!-- Beta Rate -->
+            <div class="space-y-1">
+                <div class="flex justify-between items-end">
+                    <label class="text-[9px] font-bold text-slate-400 uppercase">β Rate (予測更新)</label>
+                    <span id="labelBeta" class="text-xs font-mono text-sky-400">0.80</span>
+                </div>
+                <input type="range" id="paramBeta" min="1" max="100" value="80" class="w-full slider-custom">
+            </div>
+            <!-- System Speed -->
+            <div class="space-y-1">
+                <div class="flex justify-between items-end">
+                    <label class="text-[9px] font-bold text-slate-400 uppercase">Proc Speed (速度)</label>
+                    <span id="labelSpeed" class="text-xs font-mono text-sky-400">9.0</span>
+                </div>
+                <input type="range" id="paramSpeed" min="1" max="100" value="90" class="w-full slider-custom">
+            </div>
+        </div>
+        
+        <div class="mt-4 pt-4 border-t border-slate-700/50 flex items-center justify-between">
+            <div class="flex flex-col">
+                <span class="text-[8px] text-slate-500 uppercase font-bold tracking-widest">Autonomous Core</span>
+                <span class="text-[10px] text-emerald-400 font-mono">FULLY OPERATIONAL</span>
+            </div>
+            <button id="resetBtn" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-[9px] font-bold uppercase tracking-widest transition-all">Reset System</button>
+        </div>
+    </div>
+
+<script>
+/**
+ * IPDF FULLY AUTONOMOUS TETRIS CORE
+ * Decision Logic:
+ * 1. Evaluate Current Piece possibilities.
+ * 2. Evaluate Hold Piece possibilities.
+ * 3. Compare Future Probabilities (Imaginary Phase).
+ * 4. Execute Best Path automatically.
+ */
+const COLS = 10, ROWS = 20, BLOCK_SIZE = 24;
+const SHAPES = [[],[[1,1,1,1]],[[1,0,0],[1,1,1]],[[0,0,1],[1,1,1]],[[1,1],[1,1]],[[0,1,1],[1,1,0]],[[0,1,0],[1,1,1]],[[1,1,0],[0,1,1]]];
+const COLORS = [null, '#0ea5e9', '#3b82f6', '#f97316', '#eab308', '#22c55e', '#a855f7', '#ef4444'];
+
+class IPDFEngine {
+    constructor() {
+        this.lambda_risk = 0.75;
+        this.lambda_opt = 0.40;
+        this.beta = 0.80;
+    }
+    
+    embed(board) {
+        let heights = new Array(COLS).fill(0), holes = 0, totalHeight = 0, bumpiness = 0;
+        for (let x = 0; x < COLS; x++) {
+            let found = false;
+            for (let y = 0; y < ROWS; y++) {
+                if (board[y][x]) {
+                    if (!found) { heights[x] = ROWS - y; found = true; }
+                } else if (found) holes++;
+            }
+            totalHeight += heights[x];
+        }
+        for (let x = 0; x < COLS - 1; x++) bumpiness += Math.abs(heights[x] - heights[x+1]);
+        return { heights, holes, totalHeight, bumpiness, maxH: Math.max(...heights) };
+    }
+
+    evaluate(board, linesCleared) {
+        const f = this.embed(board);
+        const risk = (f.totalHeight * 0.6 + f.holes * 10.0 + f.maxH * 3.0);
+        const opt = (1.0 / (f.bumpiness + 1)) * 50; 
+        return (linesCleared * 100) - (this.lambda_risk * risk) + (this.lambda_opt * opt);
+    }
+
+    getBestMove(board, piece, nextPiece) {
+        if (!piece) return { move: null, score: -Infinity };
+        let bestScore = -Infinity, bestMove = null;
+        const moves = this.getAllMoves(board, piece);
+        for (const m of moves) {
+            let b1 = this.simulate(board, piece, m);
+            let l1 = this.countL(b1);
+            let b1c = this.clearL(b1);
+            let score = this.evaluate(b1c, l1);
+            
+            if (nextPiece) {
+                let nMoves = this.getAllMoves(b1c, nextPiece);
+                let ns = -Infinity;
+                for (const nm of nMoves) {
+                    let b2 = this.simulate(b1c, nextPiece, nm);
+                    let s2 = this.evaluate(this.clearL(b2), this.countL(b2));
+                    if (s2 > ns) ns = s2;
+                }
+                score += this.beta * ns;
+            }
+            if (score > bestScore) { bestScore = score; bestMove = m; }
+        }
+        return { move: bestMove, score: bestScore };
+    }
+
+    getAllMoves(board, piece) {
+        let moves = [];
+        for (let r = 0; r < 4; r++) {
+            const shape = piece.rotations[r];
+            for (let x = -2; x < COLS; x++) {
+                if (this.isValid(board, shape, x, 0)) {
+                    let y = 0; while (this.isValid(board, shape, x, y + 1)) y++;
+                    moves.push({ rotation: r, x, y });
+                }
+            }
+        }
+        return moves;
+    }
+
+    isValid(board, shape, x, y) {
+        for (let r = 0; r < shape.length; r++) {
+            for (let c = 0; c < shape[r].length; c++) {
+                if (shape[r][c]) {
+                    let nx = x + c, ny = y + r;
+                    if (nx < 0 || nx >= COLS || ny >= ROWS) return false;
+                    if (ny >= 0 && board[ny][nx]) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    simulate(board, piece, move) {
+        const nb = board.map(r => [...r]);
+        const s = piece.rotations[move.rotation];
+        for (let r = 0; r < s.length; r++) {
+            for (let c = 0; c < s[r].length; c++) {
+                if (s[r][c] && move.y + r >= 0) nb[move.y + r][move.x + c] = piece.type;
+            }
+        }
+        return nb;
+    }
+    countL(b) { return b.reduce((a, r) => a + (r.every(c => c !== 0) ? 1 : 0), 0); }
+    clearL(b) { 
+        let f = b.filter(r => !r.every(c => c !== 0));
+        while (f.length < ROWS) f.unshift(new Array(COLS).fill(0));
+        return f;
+    }
+}
+
+class Game {
+    constructor() {
+        this.mainCtx = document.getElementById('mainCanvas').getContext('2d');
+        this.nextCtx = document.getElementById('nextCanvas').getContext('2d');
+        this.holdCtx = document.getElementById('holdCanvas').getContext('2d');
+        this.ipdf = new IPDFEngine();
+        this.reset();
+        this.setupParams();
+        this.loop();
+    }
+
+    reset() {
+        this.board = Array.from({length: ROWS}, () => new Array(COLS).fill(0));
+        this.score = 0;
+        this.isGameOver = false;
+        this.holdPiece = null;
+        this.canHold = true;
+        this.nextPiece = this.createP();
+        this.moveDelay = 0;
+        this.spawn();
+        document.getElementById('gameOver').classList.add('hidden');
+        document.getElementById('scoreDisplay').innerText = '0';
+    }
+
+    createP(type = null) {
+        const t = type || Math.floor(Math.random() * 7) + 1;
+        let p = { type: t, rotations: [], rIdx: 0, x: 3, y: 0, color: COLORS[t] };
+        let s = SHAPES[t];
+        for (let i = 0; i < 4; i++) { 
+            p.rotations.push(s); 
+            s = s[0].map((_,k)=>s.map(r=>r[k]).reverse()); 
+        }
+        return p;
+    }
+
+    spawn() {
+        this.curr = this.nextPiece;
+        this.nextPiece = this.createP();
+        this.curr.x = 3;
+        this.curr.y = 0;
+        this.canHold = true;
+        this.decideAutonomousAction();
+
+        if (!this.ipdf.isValid(this.board, this.curr.rotations[this.curr.rIdx], this.curr.x, this.curr.y)) {
+            this.isGameOver = true;
+            document.getElementById('gameOver').classList.remove('hidden');
+            setTimeout(() => this.reset(), 3000);
+        }
+    }
+
+    /**
+     * IPDF 自律判断コア
+     * ホールドすべきか、現在のピースで進むべきかを虚数成分（未来）から判断する
+     */
+    decideAutonomousAction() {
+        // 現在のピースの最適解
+        const currentRes = this.ipdf.getBestMove(this.board, this.curr, this.nextPiece);
+        
+        let shouldHold = false;
+        if (this.canHold) {
+            // ホールドした場合の最適解
+            const targetHold = this.holdPiece ? this.createP(this.holdPiece.type) : this.nextPiece;
+            const holdRes = this.ipdf.getBestMove(this.board, targetHold, this.holdPiece ? this.nextPiece : null);
+            
+            // 将来の不確実性が改善されるならホールドを実行
+            if (holdRes.score > currentRes.score + 5) {
+                shouldHold = true;
+            }
+        }
+
+        if (shouldHold) {
+            this.executeHold();
+        } else {
+            this.target = currentRes.move;
+            this.updatePhaseUI(currentRes.score);
+        }
+    }
+
+    executeHold() {
+        this.createParticles(this.curr.x + 1, this.curr.y, this.curr.color, 12);
+        if (!this.holdPiece) {
+            this.holdPiece = { type: this.curr.type, rotations: this.curr.rotations, color: this.curr.color };
+            this.curr = this.nextPiece;
+            this.nextPiece = this.createP();
+        } else {
+            const tmp = { type: this.curr.type, rotations: this.curr.rotations, color: this.curr.color };
+            const nextP = this.createP(this.holdPiece.type);
+            this.curr = nextP;
+            this.holdPiece = tmp;
+        }
+        this.curr.x = 3; this.curr.y = 0;
+        this.canHold = false;
+        // ホールド後の最適解を再計算
+        const res = this.ipdf.getBestMove(this.board, this.curr, this.nextPiece);
+        this.target = res.move;
+        this.updatePhaseUI(res.score);
+    }
+
+    updatePhaseUI(score) {
+        const pDisp = document.getElementById('phaseDisplay');
+        if (score > 50) { pDisp.innerText = "OPTIMIZED"; pDisp.className = "text-xs font-mono text-emerald-400 font-bold"; }
+        else if (score > -20) { pDisp.innerText = "STABLE"; pDisp.className = "text-xs font-mono text-sky-400 font-bold"; }
+        else { pDisp.innerText = "RISK AVERSION"; pDisp.className = "text-xs font-mono text-amber-500 font-bold"; }
+    }
+
+    lock() {
+        if (!this.curr || !this.target) return;
+        const s = this.curr.rotations[this.curr.rIdx];
+        for (let r = 0; r < s.length; r++) {
+            for (let c = 0; c < s[r].length; c++) {
+                if (s[r][c] && this.curr.y + r >= 0) {
+                    this.board[this.curr.y + r][this.curr.x + c] = this.curr.type;
+                }
+            }
+        }
+        const lines = this.ipdf.countL(this.board);
+        if (lines > 0) {
+            this.score += [0, 100, 300, 500, 1200][lines];
+            document.getElementById('scoreDisplay').innerText = this.score;
+            this.createParticles(5, this.curr.y, '#fff', 25);
+            this.board = this.ipdf.clearL(this.board);
+        }
+        this.spawn();
+    }
+
+    setupParams() {
+        const ids = ['Risk', 'Opt', 'Beta', 'Speed'];
+        ids.forEach(id => {
+            const el = document.getElementById('param'+id);
+            el.addEventListener('input', (e) => {
+                const val = e.target.value / 100;
+                if (id === 'Risk') this.ipdf.lambda_risk = val;
+                if (id === 'Opt') this.ipdf.lambda_opt = val;
+                if (id === 'Beta') this.ipdf.beta = val;
+                
+                const labelVal = id === 'Speed' ? (val * 10).toFixed(1) : val.toFixed(2);
+                document.getElementById('label'+id).innerText = labelVal;
+                this.decideAutonomousAction();
+            });
+        });
+        document.getElementById('resetBtn').addEventListener('click', () => this.reset());
+    }
+
+    createParticles(x, y, color, count = 8) {
+        for (let i = 0; i < count; i++) {
+            const p = document.createElement('div');
+            p.className = 'particle';
+            // Offset logic for canvas position
+            const rect = document.getElementById('mainCanvas').getBoundingClientRect();
+            p.style.left = (rect.left + x * BLOCK_SIZE) + 'px';
+            p.style.top = (rect.top + y * BLOCK_SIZE) + 'px';
+            p.style.width = Math.random() * 6 + 2 + 'px';
+            p.style.height = p.style.width;
+            p.style.backgroundColor = color;
+            p.style.boxShadow = `0 0 10px ${color}`;
+            document.body.appendChild(p);
+            
+            const angle = Math.random() * Math.PI * 2;
+            const force = Math.random() * 120 + 40;
+            p.animate([
+                { transform: 'translate(0,0) scale(1)', opacity: 1 },
+                { transform: `translate(${Math.cos(angle)*force}px, ${Math.sin(angle)*force}px) scale(0)`, opacity: 0 }
+            ], { duration: 500 + Math.random()*500, easing: 'ease-out' }).onfinish = () => p.remove();
+        }
+    }
+
+    update() {
+        if (this.isGameOver) return;
+        this.moveDelay++;
+        const speedVal = document.getElementById('paramSpeed').value;
+        const speed = Math.max(1, Math.floor(11 - (speedVal / 10)));
+        if (this.moveDelay < speed) return;
+        this.moveDelay = 0;
+
+        if (!this.target) return;
+
+        // 自律行動実行
+        if (this.curr.rIdx !== this.target.rotation) {
+            this.curr.rIdx = (this.curr.rIdx + 1) % 4;
+        } else if (this.curr.x < this.target.x) {
+            this.curr.x++;
+        } else if (this.curr.x > this.target.x) {
+            this.curr.x--;
+        } else {
+            // ハードドロップ（AI判断による瞬間移動）
+            this.curr.y = this.target.y;
+            this.createParticles(this.curr.x + 1, this.curr.y + 1, this.curr.color, 10);
+            this.lock();
+        }
+    }
+
+    draw() {
+        this.mainCtx.clearRect(0, 0, 240, 480);
+        // Grid
+        this.mainCtx.strokeStyle = 'rgba(30, 41, 59, 0.5)';
+        for(let i=0; i<=COLS; i++) { this.mainCtx.beginPath(); this.mainCtx.moveTo(i*BLOCK_SIZE, 0); this.mainCtx.lineTo(i*BLOCK_SIZE, 480); this.mainCtx.stroke(); }
+        for(let i=0; i<=ROWS; i++) { this.mainCtx.beginPath(); this.mainCtx.moveTo(0, i*BLOCK_SIZE); this.mainCtx.lineTo(240, i*BLOCK_SIZE); this.mainCtx.stroke(); }
+        
+        // Board
+        for(let r=0; r<ROWS; r++) for(let c=0; c<COLS; c++) if(this.board[r][c]) this.drawB(this.mainCtx, c, r, COLORS[this.board[r][c]]);
+        
+        // Ghost & Piece
+        if (this.curr && this.target) {
+            this.mainCtx.globalAlpha = 0.2;
+            const ts = this.curr.rotations[this.target.rotation];
+            for(let r=0; r<ts.length; r++) for(let c=0; c<ts[r].length; c++) 
+                if(ts[r][c]) this.drawB(this.mainCtx, this.target.x+c, this.target.y+r, this.curr.color);
+            this.mainCtx.globalAlpha = 1.0;
+            
+            const s = this.curr.rotations[this.curr.rIdx];
+            for(let r=0; r<s.length; r++) for(let c=0; c<s[r].length; c++) 
+                if(s[r][c]) this.drawB(this.mainCtx, this.curr.x+c, this.curr.y+r, this.curr.color);
+        }
+
+        const drawPreview = (ctx, p) => {
+            ctx.clearRect(0,0,48,48);
+            if(!p) return;
+            const s = p.rotations[0], sz = 10;
+            const ox = (48 - s[0].length*sz)/2, oy = (48 - s.length*sz)/2;
+            ctx.fillStyle = p.color;
+            ctx.shadowBlur = 5; ctx.shadowColor = p.color;
+            for(let r=0; r<s.length; r++) for(let c=0; c<s[r].length; c++)
+                if(s[r][c]) ctx.fillRect(ox+c*sz, oy+r*sz, sz-1, sz-1);
+            ctx.shadowBlur = 0;
+        };
+        drawPreview(this.nextCtx, this.nextPiece);
+        drawPreview(this.holdCtx, this.holdPiece);
+    }
+
+    drawB(ctx, x, y, col) {
+        ctx.fillStyle = col;
+        ctx.shadowBlur = 8; ctx.shadowColor = col;
+        ctx.fillRect(x*BLOCK_SIZE+1, y*BLOCK_SIZE+1, BLOCK_SIZE-2, BLOCK_SIZE-2);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.fillRect(x*BLOCK_SIZE+1, y*BLOCK_SIZE+1, BLOCK_SIZE-2, 2);
+    }
+
+    loop() {
+        this.update(); this.draw();
+        requestAnimationFrame(() => this.loop());
+    }
+}
+
+window.onload = () => new Game();
+</script>
+</body>
+</html>
