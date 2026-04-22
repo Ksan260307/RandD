@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>VIF STRIKER (TVD Engine)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            overflow: hidden; background-color: #000; 
+            touch-action: none; user-select: none; -webkit-user-select: none; 
+        }
+        #gameCanvas { display: block; width: 100%; height: 100%; }
+        
+        .neon-text { text-shadow: 0 0 5px currentColor; }
+        .glass-panel { 
+            background: rgba(0, 20, 30, 0.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(0, 200, 255, 0.3); box-shadow: 0 0 15px rgba(0, 200, 255, 0.1);
+        }
+        
+        .slider-range { -webkit-appearance: none; width: 100%; background: rgba(0, 255, 255, 0.2); height: 4px; border-radius: 2px; outline: none; margin-top: 4px; }
+        .slider-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #0cf; cursor: pointer; box-shadow: 0 0 8px #0cf; }
+
+        #joystick-area, #action-area { position: absolute; bottom: 0; width: 50%; height: 60%; z-index: 10; }
+        #joystick-area { left: 0; } #action-area { right: 0; }
+        
+        #joystick-base { width: 100px; height: 100px; border: 2px solid rgba(0, 255, 255, 0.3); border-radius: 50%; position: absolute; display: none; pointer-events: none; transform: translate(-50%, -50%); box-shadow: inset 0 0 20px rgba(0, 255, 255, 0.2); }
+        #joystick-knob { width: 40px; height: 40px; background: rgba(0, 255, 255, 0.6); border-radius: 50%; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; box-shadow: 0 0 10px rgba(0, 255, 255, 0.5); }
+        
+        #action-btn { position: absolute; bottom: 40px; right: 40px; width: 90px; height: 90px; border-radius: 50%; border: 2px solid #0cf; background: rgba(0, 100, 200, 0.3); display: flex; align-items: center; justify-content: center; color: #0cf; font-weight: bold; pointer-events: auto; transition: all 0.1s ease-out; font-size: 14px; text-align: center; box-shadow: 0 0 15px rgba(0, 150, 255, 0.4); }
+        #action-btn.active { background: rgba(0, 200, 255, 0.6); transform: scale(0.9); box-shadow: 0 0 30px rgba(0, 255, 255, 0.8); color: #fff; text-shadow: 0 0 5px #fff; }
+
+        .blink { animation: blinker 0.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0; } }
+        
+        .bg-safe { background-color: #22d3ee; } .bg-warn { background-color: #facc15; } .bg-danger { background-color: #ef4444; }
+    </style>
+</head>
+<body class="text-cyan-400 font-mono">
+
+    <!-- UI Layer -->
+    <div class="absolute inset-0 z-10 pointer-events-none flex flex-col">
+        <div class="flex justify-between p-3 items-start pointer-events-none">
+            
+            <!-- Left Column: Metrics & TVD Monitor -->
+            <div class="flex flex-col gap-3 pointer-events-none">
+                <!-- Metrics Panel (VIF) -->
+                <div class="glass-panel p-3 rounded-lg w-52 relative overflow-hidden">
+                    <div class="text-xl font-bold neon-text mb-1 tracking-wider z-10 relative">SCORE: <span id="ui-score">0</span></div>
+                    <div class="text-[10px] text-cyan-200 mt-2 mb-1 flex justify-between z-10 relative">
+                        <span>機体の熱 (F_ext)</span><span id="ui-quality-text" class="text-green-400">OPTIMAL</span>
+                    </div>
+                    <div class="w-full bg-gray-900 h-2.5 rounded overflow-hidden border border-cyan-800 relative z-10">
+                        <div id="ui-fatigue-bar" class="h-full bg-safe w-0 transition-all duration-100 ease-linear"></div>
+                    </div>
+                    <div id="ui-overheat" class="text-red-500 font-bold mt-1 text-center text-xs neon-text blink hidden z-10 relative">OVERHEATED</div>
+                    <div id="ui-bg-glow" class="absolute inset-0 bg-cyan-500 opacity-0 transition-opacity duration-500"></div>
+                </div>
+
+                <!-- TVD Dynamics Monitor Panel -->
+                <div class="glass-panel p-3 rounded-lg w-52 relative overflow-hidden">
+                    <div class="text-[10px] mb-2 font-bold neon-text border-b border-cyan-800 pb-1 tracking-widest text-center">TVD DYNAMICS (X-Axis)</div>
+                    <div class="text-[9px] text-cyan-200 mt-1 flex justify-between"><span>DRIVE (D)</span><span id="ui-tvd-d">0.50</span></div>
+                    <div class="w-full bg-gray-900 h-1.5 rounded overflow-hidden mb-1"><div id="bar-tvd-d" class="h-full bg-cyan-400 w-1/2 transition-all duration-75"></div></div>
+                    <div class="text-[9px] text-cyan-200 mt-1 flex justify-between"><span>REGULATION (R)</span><span id="ui-tvd-r">0.50</span></div>
+                    <div class="w-full bg-gray-900 h-1.5 rounded overflow-hidden mb-1"><div id="bar-tvd-r" class="h-full bg-purple-400 w-1/2 transition-all duration-75"></div></div>
+                    <div class="text-[9px] text-cyan-200 mt-1 flex justify-between"><span>FIELD (F_int)</span><span id="ui-tvd-f">0.50</span></div>
+                    <div class="w-full bg-gray-900 h-1.5 rounded overflow-hidden"><div id="bar-tvd-f" class="h-full bg-green-400 w-1/2 transition-all duration-75"></div></div>
+                </div>
+            </div>
+            
+            <!-- VIF Parameter Panel -->
+            <div class="glass-panel p-3 rounded-lg w-56 pointer-events-auto">
+                <div class="text-xs mb-3 font-bold neon-text border-b border-cyan-800 pb-1 tracking-widest text-center">SYSTEM SETTINGS</div>
+                <div class="mb-3">
+                    <div class="flex justify-between text-[10px] mb-1 text-cyan-200"><span>ゲームのペース</span><span id="val-pace">1.0</span></div>
+                    <input type="range" id="slider-pace" class="slider-range" min="0.5" max="3.0" step="0.1" value="1.0">
+                </div>
+                <div class="mb-3">
+                    <div class="flex justify-between text-[10px] mb-1 text-cyan-200"><span>描画の奥深さ</span><span id="val-depth">200</span></div>
+                    <input type="range" id="slider-depth" class="slider-range" min="50" max="500" step="10" value="200">
+                </div>
+                <div class="mb-1">
+                    <div class="flex justify-between text-[10px] mb-1 text-cyan-200"><span>機体への負荷</span><span id="val-load">1.0</span></div>
+                    <input type="range" id="slider-load" class="slider-range" min="0.5" max="3.0" step="0.1" value="1.0">
+                </div>
+            </div>
+        </div>
+        
+        <div class="flex-grow relative pointer-events-auto">
+            <div id="joystick-area"><div id="joystick-base"><div id="joystick-knob"></div></div></div>
+            <div id="action-area"><div id="action-btn">HOLD:<br>LOCK<br>---<br>RELEASE:<br>FIRE</div></div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+    window.onload = function() {
+        // ==========================================
+        // 1. TVD (Triadic Velocity Dynamics) Engine Core
+        // ==========================================
+        const TVD_CONST = {
+            lambda_eff: 6.0,   // 復元力（操作性のためやや強め）
+            epsilon: 0.1,      // 非線形復元力係数
+            alpha_D: 4.0,      // Driveへの入力感度（推進力）
+            alpha_R: 2.5,      // Regulationへの入力感度（ブレーキ・制御力）
+            alpha_F: 1.0       // Fieldへの入力感度（内部文脈の乱れ）
+        };
+
+        class TVD_Engine {
+            constructor() { 
+                // 初期化時、境界制約内に設定
+                this.D = 0.5; this.R = 0.5; this.F_int = 0.5; 
+            }
+            
+            update(input_val, f_ext, dt, pace) {
+                // サニタイズ（16章フェイルセーフ）
+                let safe_input = isFinite(input_val) ? input_val : 0.0;
+
+                // RK2積分 (11.1章)
+                let k1 = this.deriv(this.D, this.R, this.F_int, safe_input, f_ext, pace);
+                let s2D = this.D + k1[0]*dt/2;
+                let s2R = this.R + k1[1]*dt/2;
+                let s2F = this.F_int + k1[2]*dt/2;
+                
+                let k2 = this.deriv(s2D, s2R, s2F, safe_input, f_ext, pace);
+                
+                this.D += k2[0]*dt; this.R += k2[1]*dt; this.F_int += k2[2]*dt;
+                
+                // 境界制約適用とNaN検知・ハードリセット (6.2章 & 16章)
+                if(!isFinite(this.D) || !isFinite(this.R) || !isFinite(this.F_int)) {
+                    this.D = 0.5; this.R = 0.5; this.F_int = 0.5;
+                }
+                this.D = Math.max(0, Math.min(1, this.D));
+                this.R = Math.max(0, Math.min(1, this.R));
+                this.F_int = Math.max(0, Math.min(1, this.F_int));
+            }
+
+            deriv(d, r, f, input_val, f_ext, pace) {
+                // F_total統合 (4章)
+                let f_tot = Math.max(0, Math.min(1, f + f_ext));
+                
+                // 入力の非線形処理 (9.2章)
+                let in_t = Math.tanh(input_val);
+                
+                // ゲイン関数 (8章) : ペースに連動させることでシステムの高負荷状態を再現
+                let v_norm = (pace - 0.5) / 2.5; // 正規化
+                let G = Math.exp(1.5 * (v_norm - 0.5));
+                
+                let lam = TVD_CONST.lambda_eff;
+                let eps = TVD_CONST.epsilon;
+                
+                // 状態更新モデル (6.1章)
+                let dd = G*(f_tot - r) - lam*(d - 0.5) - eps*(d - 0.5)*Math.abs(d - 0.5) + TVD_CONST.alpha_D * in_t;
+                let dr = G*(d - f_tot) - lam*(r - 0.5) - eps*(r - 0.5)*Math.abs(r - 0.5) + TVD_CONST.alpha_R * in_t;
+                let df = G*(d - r)     - lam*(f - 0.5) - eps*(f - 0.5)*Math.abs(f - 0.5) + TVD_CONST.alpha_F * in_t;
+                
+                return [dd, dr, df];
+            }
+
+            // 制御観測 (10.2章) : 超越関数を避けた軽量近似式を採用
+            get_output(f_ext) {
+                let f_tot = Math.max(0, Math.min(1, this.F_int + f_ext));
+                let x = (this.D - this.R) * (1 + f_tot);
+                return x / (1 + Math.abs(x)); // -> おおよそ [-1, 1] の出力に漸近
+            }
+        }
+        
+        // XY各軸独立したTVDインスタンス
+        const tvdX = new TVD_Engine();
+        const tvdY = new TVD_Engine();
+
+
+        // ==========================================
+        // 2. UCD-F + VIF State Layer (SoA Architecture)
+        // ==========================================
+        const MAX_ENT = 2048; 
+        const ENT_TYPE = { INACTIVE: 0, PLAYER: 1, ENEMY: 2, BULLET: 3, MARKER: 4, PARTICLE: 5 };
+
+        const SOA = {
+            active: new Uint8Array(MAX_ENT), type: new Uint8Array(MAX_ENT),
+            px: new Float32Array(MAX_ENT), py: new Float32Array(MAX_ENT), pz: new Float32Array(MAX_ENT),
+            vx: new Float32Array(MAX_ENT), vy: new Float32Array(MAX_ENT), vz: new Float32Array(MAX_ENT),
+            timer: new Float32Array(MAX_ENT), hp: new Int32Array(MAX_ENT), targetId: new Int32Array(MAX_ENT),
+            quality: new Float32Array(MAX_ENT) 
+        };
+
+        function spawn(type, px, py, pz, vx, vy, vz, hp = 1, quality = 1.0) {
+            for (let i = 1; i < MAX_ENT; i++) {
+                if (SOA.active[i] === 0) {
+                    SOA.active[i] = 1; SOA.type[i] = type;
+                    SOA.px[i] = px; SOA.py[i] = py; SOA.pz[i] = pz;
+                    SOA.vx[i] = vx; SOA.vy[i] = vy; SOA.vz[i] = vz;
+                    SOA.timer[i] = 0; SOA.hp[i] = hp; SOA.targetId[i] = -1; SOA.quality[i] = quality;
+                    return i;
+                }
+            } return -1;
+        }
+        function free(index) { SOA.active[index] = 0; }
+
+        const GameState = { score: 0, fatigue: 0, isOverheated: false, spawnTimer: 0, lockTimer: 0, lockedTargets: [] };
+        const Input = { x: 0, y: 0, isLocking: false, triggerFire: false };
+        const VIF = { pace: 1.0, depth: 200, load: 1.0 }; 
+
+        const VIF_CONST = { beta: 0.8, gamma: 2.0, skill: 1.0, cap: 100 };
+        function calcPlayerQuality() { return Math.max(0.1, 1.0 / (1.0 + (VIF_CONST.beta/VIF_CONST.skill)*0.1 + VIF_CONST.gamma*(GameState.fatigue/VIF_CONST.cap))); }
+        function calcSystemQuality() { return Math.max(0.1, 1.0 / (1.0 + (VIF_CONST.beta/VIF_CONST.skill)*Math.max(0, VIF.pace-1.0))); }
+
+        SOA.active[0] = 1; SOA.type[0] = ENT_TYPE.PLAYER; SOA.px[0] = 0; SOA.py[0] = 0; SOA.pz[0] = 0; SOA.quality[0] = 1.0;
+
+        // ==========================================
+        // 3. IO Adapters (UI / Controls)
+        // ==========================================
+        ['pace', 'depth', 'load'].forEach(key => {
+            document.getElementById(`slider-${key}`).addEventListener('input', (e) => {
+                VIF[key] = parseFloat(e.target.value); document.getElementById(`val-${key}`).innerText = VIF[key].toFixed(1);
+            });
+        });
+
+        const btnAction = document.getElementById('action-btn');
+        const pressAction = (e) => { e.preventDefault(); if(GameState.isOverheated) return; Input.isLocking = true; btnAction.classList.add('active'); };
+        const releaseAction = (e) => { e.preventDefault(); Input.isLocking = false; Input.triggerFire = true; btnAction.classList.remove('active'); };
+        btnAction.addEventListener('mousedown', pressAction); btnAction.addEventListener('touchstart', pressAction, {passive: false});
+        window.addEventListener('mouseup', releaseAction); window.addEventListener('touchend', releaseAction, {passive: false});
+
+        const joyArea = document.getElementById('joystick-area'), joyBase = document.getElementById('joystick-base'), joyKnob = document.getElementById('joystick-knob');
+        let joyActive = false, joyCenter = { x: 0, y: 0 };
+        joyArea.addEventListener('touchstart', (e) => {
+            e.preventDefault(); joyActive = true; joyCenter.x = e.changedTouches[0].clientX; joyCenter.y = e.changedTouches[0].clientY;
+            joyBase.style.display = 'block'; joyBase.style.left = `${joyCenter.x}px`; joyBase.style.top = `${joyCenter.y}px`;
+            joyKnob.style.transform = `translate(-50%, -50%)`; Input.x = 0; Input.y = 0;
+        }, {passive: false});
+        joyArea.addEventListener('touchmove', (e) => {
+            e.preventDefault(); if (!joyActive) return;
+            let dx = e.changedTouches[0].clientX - joyCenter.x, dy = e.changedTouches[0].clientY - joyCenter.y;
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist > 50) { dx = (dx/dist)*50; dy = (dy/dist)*50; }
+            joyKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+            Input.x = dx / 50; Input.y = -dy / 50;
+        }, {passive: false});
+        joyArea.addEventListener('touchend', (e) => { e.preventDefault(); joyActive = false; joyBase.style.display = 'none'; Input.x = 0; Input.y = 0; }, {passive: false});
+
+        const keys = { w:false, a:false, s:false, d:false };
+        window.addEventListener('keydown', (e) => {
+            if(e.key==='w'||e.key==='ArrowUp') keys.w=true; if(e.key==='s'||e.key==='ArrowDown') keys.s=true;
+            if(e.key==='a'||e.key==='ArrowLeft') keys.a=true; if(e.key==='d'||e.key==='ArrowRight') keys.d=true;
+            if(e.key===' ') { if(!GameState.isOverheated) { Input.isLocking = true; btnAction.classList.add('active'); } }
+            if(!joyActive) { Input.x = (keys.d?1:0)-(keys.a?1:0); Input.y = (keys.w?1:0)-(keys.s?1:0); }
+        });
+        window.addEventListener('keyup', (e) => {
+            if(e.key==='w'||e.key==='ArrowUp') keys.w=false; if(e.key==='s'||e.key==='ArrowDown') keys.s=false;
+            if(e.key==='a'||e.key==='ArrowLeft') keys.a=false; if(e.key==='d'||e.key==='ArrowRight') keys.d=false;
+            if(e.key===' ') { Input.isLocking = false; Input.triggerFire = true; btnAction.classList.remove('active'); }
+            if(!joyActive) { Input.x = (keys.d?1:0)-(keys.a?1:0); Input.y = (keys.w?1:0)-(keys.s?1:0); }
+        });
+
+        // ==========================================
+        // 4. Three.js Rendering Setup
+        // ==========================================
+        const canvas = document.getElementById('gameCanvas');
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        const scene = new THREE.Scene(); scene.background = new THREE.Color(0x000510); scene.fog = new THREE.Fog(0x000510, 50, VIF.depth);
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        
+        scene.add(new THREE.AmbientLight(0x404040));
+        const dirLight = new THREE.DirectionalLight(0x00ffff, 0.8); dirLight.position.set(10, 20, 10); scene.add(dirLight);
+        const gridHelper = new THREE.GridHelper(800, 100, 0x0088ff, 0x002244); gridHelper.position.y = -15; scene.add(gridHelper);
+
+        const instEnemy = new THREE.InstancedMesh(new THREE.TetrahedronGeometry(2), new THREE.MeshPhongMaterial({ color: 0xff0044, wireframe: true, emissive: 0x440011 }), MAX_ENT);
+        instEnemy.instanceMatrix.setUsage(THREE.DynamicDrawUsage); scene.add(instEnemy);
+
+        const instBullet = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.2, 0.2, 4).rotateX(Math.PI/2), new THREE.MeshBasicMaterial({ color: 0x00ffff }), MAX_ENT);
+        instBullet.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        instBullet.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_ENT * 3), 3); scene.add(instBullet);
+
+        const instMarker = new THREE.InstancedMesh(new THREE.TorusGeometry(3, 0.2, 4, 16), new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true }), MAX_ENT);
+        instMarker.instanceMatrix.setUsage(THREE.DynamicDrawUsage); scene.add(instMarker);
+
+        const instParticle = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, blending: THREE.AdditiveBlending }), MAX_ENT);
+        instParticle.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        instParticle.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_ENT * 3), 3); scene.add(instParticle);
+
+        const playerMesh = new THREE.Mesh(new THREE.ConeGeometry(2, 6, 4).rotateX(Math.PI/2), new THREE.MeshPhongMaterial({ color: 0x00aaff, flatShading: true }));
+        scene.add(playerMesh);
+        const engineGlow = new THREE.PointLight(0x00ffff, 1, 10); engineGlow.position.set(0, 0, 3); playerMesh.add(engineGlow);
+
+
+        // ==========================================
+        // 5. Logic Loop (UCD-F / VIF / TVD Integration)
+        // ==========================================
+        const DT = 1.0 / 60.0;
+        function createExplosion(x,y,z,size,count) { for(let i=0; i<count; i++) spawn(ENT_TYPE.PARTICLE, x,y,z, (Math.random()-0.5)*size*10, (Math.random()-0.5)*size*10, (Math.random()-0.5)*size*10, size); }
+        function isEnemyLocked(idx) { return GameState.lockedTargets.some(mId => SOA.active[mId] && SOA.targetId[mId] === idx); }
+        function clearLockons() { GameState.lockedTargets.forEach(id => free(id)); GameState.lockedTargets.length = 0; Input.isLocking = false; btnAction.classList.remove('active'); }
+
+        function logicUpdate() {
+            // VIF: Fatigue Recovery
+            if (GameState.isOverheated) {
+                GameState.fatigue -= 30 * DT; 
+                if (GameState.fatigue <= 0) { GameState.fatigue = 0; GameState.isOverheated = false; document.getElementById('ui-overheat').classList.add('hidden'); }
+            } else {
+                GameState.fatigue -= (15 / VIF.load) * DT;
+                if (GameState.fatigue < 0) GameState.fatigue = 0;
+            }
+
+            // ----------------------------------------------------
+            // TVD Integration: Player Movement Dynamics
+            // ----------------------------------------------------
+            // Fatigueを外部環境圧力 (F_external) としてTVDに注入
+            let f_ext = GameState.fatigue / VIF_CONST.cap;
+
+            tvdX.update(Input.x, f_ext, DT, VIF.pace);
+            tvdY.update(Input.y, f_ext, DT, VIF.pace);
+
+            let outX = tvdX.get_output(f_ext);
+            let outY = tvdY.get_output(f_ext);
+
+            // TVDの非線形出力を速度に変換 (おおよそ -0.6 ~ 0.6 の範囲で変動する)
+            SOA.vx[0] = outX * 160; 
+            SOA.vy[0] = outY * 130;
+
+            let px = SOA.px[0] + SOA.vx[0] * DT, py = SOA.py[0] + SOA.vy[0] * DT;
+            SOA.px[0] = Math.max(-40, Math.min(40, px)); SOA.py[0] = Math.max(-20, Math.min(25, py));
+            // ----------------------------------------------------
+
+            // VIF: Actions
+            if (!GameState.isOverheated) {
+                if (Input.isLocking) {
+                    GameState.fatigue += 15 * VIF.load * DT; GameState.lockTimer += DT;
+                    if (GameState.lockTimer > 0.15 && GameState.lockedTargets.length < 12) {
+                        GameState.lockTimer = 0;
+                        for (let i = 1; i < MAX_ENT; i++) {
+                            if (SOA.active[i] && SOA.type[i] === ENT_TYPE.ENEMY && !isEnemyLocked(i)) {
+                                if (SOA.pz[i] < -20 && SOA.pz[i] > -VIF.depth && Math.abs(SOA.px[i] - SOA.px[0]) < 40) {
+                                    let mId = spawn(ENT_TYPE.MARKER, SOA.px[i], SOA.py[i], SOA.pz[i], 0,0,0);
+                                    if (mId !== -1) { SOA.targetId[mId] = i; GameState.lockedTargets.push(mId); } break;
+                                }
+                            }
+                        }
+                    }
+                } else if (Input.triggerFire) {
+                    Input.triggerFire = false;
+                    if (GameState.lockedTargets.length > 0) {
+                        GameState.fatigue += GameState.lockedTargets.length * 3 * VIF.load;
+                        let currentQuality = calcPlayerQuality();
+                        GameState.lockedTargets.forEach(mId => {
+                            if (SOA.active[mId]) {
+                                let eId = SOA.targetId[mId];
+                                if (SOA.active[eId] && SOA.type[eId] === ENT_TYPE.ENEMY) {
+                                    let bId = spawn(ENT_TYPE.BULLET, SOA.px[0], SOA.py[0], SOA.pz[0], (Math.random()-0.5)*80, Math.random()*50, -100, 1, currentQuality);
+                                    if (bId !== -1) SOA.targetId[bId] = eId;
+                                }
+                                free(mId);
+                            }
+                        });
+                        GameState.lockedTargets.length = 0;
+                    }
+                }
+            } else { Input.triggerFire = false; }
+
+            if (GameState.fatigue >= VIF_CONST.cap) {
+                GameState.fatigue = VIF_CONST.cap;
+                if(!GameState.isOverheated) { GameState.isOverheated = true; document.getElementById('ui-overheat').classList.remove('hidden'); clearLockons(); }
+            }
+
+            GameState.spawnTimer += DT;
+            if (GameState.spawnTimer > 1.0 / (VIF.pace * 2.0)) {
+                GameState.spawnTimer = 0;
+                spawn(ENT_TYPE.ENEMY, (Math.random()-0.5)*100, (Math.random()-0.5)*40, -VIF.depth, 0, 0, 0, 10, calcSystemQuality());
+            }
+
+            // Dynamics
+            for (let i = 1; i < MAX_ENT; i++) {
+                if (SOA.active[i] === 0) continue;
+                let t = SOA.type[i]; SOA.timer[i] += DT;
+
+                if (t === ENT_TYPE.ENEMY) {
+                    let noiseAmp = 30 * (1.0 - SOA.quality[i]);
+                    SOA.vz[i] = VIF.pace * 60;
+                    SOA.vx[i] = Math.sin(SOA.timer[i] * 2 + i) * 10 + (Math.random() - 0.5) * noiseAmp;
+                    SOA.vy[i] = Math.cos(SOA.timer[i] * 3) * noiseAmp * 0.5;
+                    SOA.px[i] += SOA.vx[i] * DT; SOA.py[i] += SOA.vy[i] * DT; SOA.pz[i] += SOA.vz[i] * DT;
+                    if (SOA.pz[i] > 20) free(i);
+                } else if (t === ENT_TYPE.BULLET) {
+                    let target = SOA.targetId[i];
+                    if (target !== -1 && SOA.active[target] && SOA.type[target] === ENT_TYPE.ENEMY) {
+                        let dx = SOA.px[target] - SOA.px[i], dy = SOA.py[target] - SOA.py[i], dz = SOA.pz[target] - SOA.pz[i];
+                        let dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                        if (dist > 0.1) {
+                            const accel = 800 * Math.pow(SOA.quality[i], 2);
+                            SOA.vx[i] += ((dx / dist) * accel + (Math.random()-0.5)*800*(1.0-SOA.quality[i])) * DT;
+                            SOA.vy[i] += ((dy / dist) * accel + (Math.random()-0.5)*800*(1.0-SOA.quality[i])) * DT;
+                            SOA.vz[i] += ((dz / dist) * accel) * DT; 
+                        }
+                    }
+                    SOA.vx[i] *= 0.96; SOA.vy[i] *= 0.96; 
+                    SOA.px[i] += SOA.vx[i] * DT; SOA.py[i] += SOA.vy[i] * DT; SOA.pz[i] += SOA.vz[i] * DT;
+                    if (SOA.timer[i] > 3) { free(i); continue; }
+
+                    for (let j = 1; j < MAX_ENT; j++) {
+                        if (SOA.active[j] && SOA.type[j] === ENT_TYPE.ENEMY) {
+                            let dx = SOA.px[i] - SOA.px[j], dy = SOA.py[i] - SOA.py[j], dz = SOA.pz[i] - SOA.pz[j];
+                            if (dx*dx + dy*dy + dz*dz < 25) { 
+                                SOA.hp[j] -= 10; free(i); createExplosion(SOA.px[i], SOA.py[i], SOA.pz[i], 1, 5);
+                                if (SOA.hp[j] <= 0) { free(j); createExplosion(SOA.px[j], SOA.py[j], SOA.pz[j], 3, 20); GameState.score += Math.floor(100 * VIF.pace); } break;
+                            }
+                        }
+                    }
+                } else if (t === ENT_TYPE.MARKER) {
+                    let target = SOA.targetId[i];
+                    if (target !== -1 && SOA.active[target] && SOA.type[target] === ENT_TYPE.ENEMY) {
+                        SOA.px[i] = SOA.px[target]; SOA.py[i] = SOA.py[target]; SOA.pz[i] = SOA.pz[target];
+                    } else free(i);
+                } else if (t === ENT_TYPE.PARTICLE) {
+                    SOA.px[i] += SOA.vx[i] * DT; SOA.py[i] += SOA.vy[i] * DT; SOA.pz[i] += SOA.vz[i] * DT;
+                    SOA.vx[i] *= 0.9; SOA.vy[i] *= 0.9; SOA.vz[i] *= 0.9;
+                    if (SOA.timer[i] > 0.5) free(i);
+                }
+            }
+        }
+        setInterval(logicUpdate, 1000 * DT);
+
+        // ==========================================
+        // 6. View & Render Loop
+        // ==========================================
+        const dummy = new THREE.Object3D(); const tmpColor = new THREE.Color();
+        const elQualityTxt = document.getElementById('ui-quality-text'), elFatigue = document.getElementById('ui-fatigue-bar'), elBgGlow = document.getElementById('ui-bg-glow');
+
+        function updateUI() {
+            document.getElementById('ui-score').innerText = GameState.score;
+            elFatigue.style.width = `${GameState.fatigue}%`;
+            
+            let q = calcPlayerQuality();
+            if (q > 0.8) { elQualityTxt.innerText = "OPTIMAL"; elQualityTxt.className = "text-green-400"; elFatigue.className = 'h-full bg-safe transition-all duration-100 ease-linear'; elBgGlow.style.opacity = 0; } 
+            else if (q > 0.4) { elQualityTxt.innerText = "DEGRADED"; elQualityTxt.className = "text-yellow-400"; elFatigue.className = 'h-full bg-warn transition-all duration-100 ease-linear'; elBgGlow.style.opacity = 0.2; elBgGlow.style.backgroundColor = '#facc15'; } 
+            else { elQualityTxt.innerText = "CRITICAL"; elQualityTxt.className = "text-red-500 blink"; elFatigue.className = 'h-full bg-danger transition-all duration-100 ease-linear'; elBgGlow.style.opacity = 0.4; elBgGlow.style.backgroundColor = '#ef4444'; }
+
+            // TVD UI Update
+            document.getElementById('ui-tvd-d').innerText = tvdX.D.toFixed(2); document.getElementById('bar-tvd-d').style.width = `${tvdX.D * 100}%`;
+            document.getElementById('ui-tvd-r').innerText = tvdX.R.toFixed(2); document.getElementById('bar-tvd-r').style.width = `${tvdX.R * 100}%`;
+            document.getElementById('ui-tvd-f').innerText = tvdX.F_int.toFixed(2); document.getElementById('bar-tvd-f').style.width = `${tvdX.F_int * 100}%`;
+        }
+
+        function renderLoop() {
+            requestAnimationFrame(renderLoop); updateUI();
+            scene.fog.far = VIF.depth;
+            gridHelper.position.z += VIF.pace * 60 * DT; if (gridHelper.position.z > 20) gridHelper.position.z -= 20;
+
+            let cEnemy = 0, cBullet = 0, cMarker = 0, cParticle = 0;
+
+            playerMesh.position.set(SOA.px[0], SOA.py[0], SOA.pz[0]);
+            
+            // TVDのアウトプット（(D-R)*(1+F_tot)）を機体の傾き（バンク角）にダイレクトに反映させる
+            let tvdBankX = tvdX.get_output(GameState.fatigue/100);
+            let tvdBankY = tvdY.get_output(GameState.fatigue/100);
+            playerMesh.rotation.set(-Math.PI/2 + tvdBankY * 1.0, 0, -tvdBankX * 1.5);
+            
+            camera.position.x += (SOA.px[0]*0.3 - camera.position.x)*0.1;
+            camera.position.y += (SOA.py[0]*0.3 + 12 - camera.position.y)*0.1;
+            camera.lookAt(SOA.px[0]*0.2, SOA.py[0]*0.2, -100);
+
+            for (let i = 1; i < MAX_ENT; i++) {
+                if (SOA.active[i] === 0) continue;
+                let t = SOA.type[i]; dummy.position.set(SOA.px[i], SOA.py[i], SOA.pz[i]);
+
+                if (t === ENT_TYPE.ENEMY) {
+                    dummy.rotation.set(SOA.timer[i], SOA.timer[i]*1.5, 0); dummy.scale.setScalar(2.5); dummy.updateMatrix();
+                    instEnemy.setMatrixAt(cEnemy++, dummy.matrix);
+                } else if (t === ENT_TYPE.BULLET) {
+                    let v = new THREE.Vector3(SOA.vx[i], SOA.vy[i], SOA.vz[i]);
+                    if (v.lengthSq() > 0.1) dummy.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), v.normalize());
+                    dummy.scale.setScalar(1); dummy.updateMatrix();
+                    instBullet.setMatrixAt(cBullet, dummy.matrix);
+                    tmpColor.setHSL(0.5 * SOA.quality[i], 1.0, 0.5); instBullet.setColorAt(cBullet++, tmpColor);
+                } else if (t === ENT_TYPE.MARKER) {
+                    dummy.rotation.z = SOA.timer[i] * 5; dummy.scale.setScalar(Math.max(1, 3 - SOA.timer[i]*10)); dummy.updateMatrix();
+                    instMarker.setMatrixAt(cMarker++, dummy.matrix);
+                } else if (t === ENT_TYPE.PARTICLE) {
+                    let life = SOA.timer[i]/0.5, inv = 1.0 - life;
+                    dummy.scale.setScalar(SOA.hp[i] * inv * 2); dummy.lookAt(camera.position); dummy.updateMatrix();
+                    instParticle.setMatrixAt(cParticle, dummy.matrix);
+                    tmpColor.setHSL(0.05 + 0.1*inv, 1.0, 0.5*inv); instParticle.setColorAt(cParticle++, tmpColor);
+                }
+            }
+
+            instEnemy.count = cEnemy; instEnemy.instanceMatrix.needsUpdate = true;
+            instBullet.count = cBullet; instBullet.instanceMatrix.needsUpdate = true; if(cBullet > 0) instBullet.instanceColor.needsUpdate = true;
+            instMarker.count = cMarker; instMarker.instanceMatrix.needsUpdate = true;
+            instParticle.count = cParticle; instParticle.instanceMatrix.needsUpdate = true; if(cParticle > 0) instParticle.instanceColor.needsUpdate = true;
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+        renderLoop();
+    };
+    </script>
+</body>
+</html>
