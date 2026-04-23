@@ -33,58 +33,36 @@
             pointer-events: auto;
         }
 
-        /* Virtual Joystick */
+        /* Virtual Joystick Area */
         #joystick-zone {
-            width: 140px; height: 140px;
-            background: rgba(0, 255, 255, 0.05);
-            border: 2px solid rgba(0, 255, 255, 0.2);
+            width: 150px; height: 150px;
+            background: rgba(0, 255, 255, 0.1);
+            border: 2px solid rgba(0, 255, 255, 0.3);
             border-radius: 50%;
             position: relative;
             touch-action: none;
         }
         #joystick-stick {
-            width: 50px; height: 50px;
-            background: rgba(0, 255, 255, 0.4);
+            width: 60px; height: 60px;
+            background: rgba(0, 255, 255, 0.5);
             border-radius: 50%;
             position: absolute;
             top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            box-shadow: 0 0 15px #0ff;
+            box-shadow: 0 0 20px #0ff;
         }
 
-        /* Lock / Fire Area */
-        #action-zone {
-            width: 140px; height: 140px;
-            background: rgba(255, 0, 100, 0.1);
-            border: 2px solid rgba(255, 0, 100, 0.3);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            color: #f06;
-            touch-action: none;
-            transition: transform 0.1s, background 0.1s;
-        }
-        #action-zone.active {
-            background: rgba(255, 0, 100, 0.4);
-            transform: scale(1.1);
-        }
-
-        /* Parameters Area */
+        /* Parameters Area (Sliders) */
         #params-panel {
-            position: absolute;
-            top: 100px; right: 20px;
             background: rgba(0, 20, 40, 0.7);
             border: 1px solid #0ff;
             padding: 15px;
             border-radius: 10px;
-            width: 180px;
+            width: 200px;
             backdrop-filter: blur(5px);
-            pointer-events: auto;
         }
         .slider-group { margin-bottom: 12px; }
-        .slider-group label { display: block; font-size: 10px; margin-bottom: 5px; color: #0ff; }
+        .slider-group label { display: block; font-size: 12px; margin-bottom: 5px; color: #0ff; }
         input[type=range] {
             width: 100%;
             appearance: none;
@@ -95,10 +73,11 @@
         }
         input[type=range]::-webkit-slider-thumb {
             appearance: none;
-            width: 14px; height: 14px;
+            width: 16px; height: 16px;
             background: #0ff;
             border-radius: 50%;
             cursor: pointer;
+            box-shadow: 0 0 10px #0ff;
         }
 
         #speed-lines {
@@ -106,87 +85,78 @@
             top: 0; left: 0; width: 100%; height: 100%;
             pointer-events: none;
             opacity: 0;
+            transition: opacity 0.1s;
             background: radial-gradient(circle, transparent 30%, rgba(0, 255, 255, 0.1) 100%);
-        }
-
-        #crosshair {
-            position: absolute;
-            top: 50%; left: 50%;
-            width: 40px; height: 40px;
-            border: 2px solid #0ff;
-            transform: translate(-50%, -50%);
-            border-radius: 50%;
-            pointer-events: none;
-            opacity: 0.5;
         }
     </style>
 </head>
 <body>
 
 <div id="speed-lines"></div>
-<div id="crosshair"></div>
 
 <div id="ui-container">
     <div id="header">
-        <div>VIF STRIKER // ZMF-UCD-F COMBAT CORE</div>
-        <div id="stats">FPS: -- | TARGETS: 0 | LOCKS: 0</div>
+        <div>VIF STRIKER // ZMF-UCD-F INTEGRATED ENGINE</div>
+        <div id="stats">FPS: -- | TARGETS: 0</div>
     </div>
 
     <div id="controls-root">
-        <!-- 移動操作 -->
+        <!-- Joystick -->
         <div id="joystick-zone">
             <div id="joystick-stick"></div>
         </div>
 
-        <!-- 攻撃操作 -->
-        <div id="action-zone">LOCK / FIRE</div>
-    </div>
-
-    <div id="params-panel">
-        <div class="slider-group">
-            <label>前進スピード</label>
-            <input type="range" id="param-worldspeed" min="0" max="10" step="0.5" value="3.0">
-        </div>
-        <div class="slider-group">
-            <label>機体の重さ</label>
-            <input type="range" id="param-mass" min="0.5" max="5" step="0.1" value="1.0">
-        </div>
-        <div class="slider-group">
-            <label>旋回の傾き</label>
-            <input type="range" id="param-bank" min="0" max="60" step="1" value="30">
+        <!-- Parameters (ZMF Interface) -->
+        <div id="params-panel">
+            <div class="slider-group">
+                <label>前進スピード (World Speed)</label>
+                <input type="range" id="param-worldspeed" min="0" max="10" step="0.5" value="2.0">
+            </div>
+            <div class="slider-group">
+                <label>機体の重さ (Mass)</label>
+                <input type="range" id="param-mass" min="0.5" max="5" step="0.1" value="1.0">
+            </div>
+            <div class="slider-group">
+                <label>動きのキレ (Crispness)</label>
+                <input type="range" id="param-crisp" min="0.01" max="0.5" step="0.01" value="0.1">
+            </div>
+            <div class="slider-group">
+                <label>旋回の傾き (Leaning)</label>
+                <input type="range" id="param-bank" min="0" max="60" step="1" value="30">
+            </div>
+            <div class="slider-group">
+                <label>ブレーキの強さ (Braking)</label>
+                <input type="range" id="param-brake" min="0.8" max="0.99" step="0.01" value="0.95">
+            </div>
         </div>
     </div>
 </div>
 
 <script>
 /**
- * VIF STRIKER - Combat Logic
- * Based on ZMF (Motion) & UCD-F (SoA / Swap-and-Pop)
+ * VIF STRIKER - Core Simulation Script
+ * Logic based on ZMF v1.0.0 & UCD-F v1.0.0
  */
 
-// --- 1. CONFIG ---
+// --- CONFIG & ZMF PARAMETERS ---
 const CONFIG = {
     mass: 1.0,
     zeta: 0.1,
     maxBank: 30,
     viscosity: 0.95,
-    worldSpeed: 3.0, 
-    enemySpawnRate: 0.5,
-    maxEnemies: 500,
-    maxLasers: 100,
-    maxLocks: 8
+    worldSpeed: 2.0, // 純粋な前進速度
+    enemySpawnRate: 0.05, 
+    maxEnemies: 100 
 };
 
-// --- 2. SoA (Structure of Arrays) DATA MODEL ---
-const Player = {
-    pos: new THREE.Vector3(0, 0, 0),
-    vel: new THREE.Vector3(0, 0, 0),
-    acc: new THREE.Vector3(0, 0, 0),
-    prevAcc: new THREE.Vector3(0, 0, 0),
+// --- UCD-F: SoA (Structure of Arrays) Data Model ---
+const PlayerState = {
+    pos: new Float32Array(3),
+    vel: new Float32Array(3),
+    acc: new Float32Array(3),
+    prevAcc: new Float32Array(3),
     bank: 0,
-    input: new THREE.Vector2(0, 0),
-    isLocking: false,
-    lockIndices: [] // ロック中の敵インデックス
+    targetInput: { x: 0, y: 0 }
 };
 
 const EnemyState = {
@@ -194,26 +164,13 @@ const EnemyState = {
     posX: new Float32Array(CONFIG.maxEnemies),
     posY: new Float32Array(CONFIG.maxEnemies),
     posZ: new Float32Array(CONFIG.maxEnemies),
-    isLocked: new Uint8Array(CONFIG.maxEnemies),
+    velZ: new Float32Array(CONFIG.maxEnemies),
     meshes: [] 
 };
 
-const LaserState = {
-    count: 0,
-    posX: new Float32Array(CONFIG.maxLasers),
-    posY: new Float32Array(CONFIG.maxLasers),
-    posZ: new Float32Array(CONFIG.maxLasers),
-    velX: new Float32Array(CONFIG.maxLasers),
-    velY: new Float32Array(CONFIG.maxLasers),
-    velZ: new Float32Array(CONFIG.maxLasers),
-    targetIdx: new Int32Array(CONFIG.maxLasers), // -1: 直進, 0以上: 誘導対象
-    life: new Float32Array(CONFIG.maxLasers),
-    meshes: []
-};
-
-// --- 3. THREE.JS INITIALIZATION ---
+// --- THREE.JS SETUP ---
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x000510, 0.01);
+scene.fog = new THREE.FogExp2(0x000510, 0.012);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -221,304 +178,190 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x000510);
 document.body.appendChild(renderer.domElement);
 
-// プレイヤー機体 (ZMF Visual)
+// --- ASSETS ---
 const shipGroup = new THREE.Group();
 const shipBody = new THREE.Mesh(
-    new THREE.ConeGeometry(0.4, 1.6, 4),
-    new THREE.MeshPhongMaterial({ color: 0x00ffff, flatShading: true })
+    new THREE.ConeGeometry(0.5, 2, 4),
+    new THREE.MeshPhongMaterial({ color: 0x00ffff, wireframe: false, flatShading: true })
 );
 shipBody.rotation.x = Math.PI / 2;
 shipGroup.add(shipBody);
-const wings = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.05, 0.6), new THREE.MeshPhongMaterial({ color: 0x0088ff }));
+const wings = new THREE.Mesh(new THREE.BoxGeometry(2, 0.1, 0.7), new THREE.MeshPhongMaterial({ color: 0x0088ff }));
 shipGroup.add(wings);
 scene.add(shipGroup);
 
-// 敵・レーザーのプール初期化
-const enemyGeo = new THREE.BoxGeometry(1.2, 1.2, 1.2);
-const enemyMat = new THREE.MeshPhongMaterial({ color: 0xff3300, emissive: 0x220000 });
+const enemyGeo = new THREE.OctahedronGeometry(0.8);
+const enemyMat = new THREE.MeshPhongMaterial({ color: 0xff3300, emissive: 0x440000 });
+
 for (let i = 0; i < CONFIG.maxEnemies; i++) {
-    const mesh = new THREE.Mesh(enemyGeo, enemyMat.clone());
+    const mesh = new THREE.Mesh(enemyGeo, enemyMat);
     mesh.visible = false;
     scene.add(mesh);
     EnemyState.meshes.push(mesh);
 }
 
-const laserGeo = new THREE.CylinderGeometry(0.08, 0.08, 3, 8);
-const laserMatNormal = new THREE.MeshBasicMaterial({ color: 0x00ffff });
-const laserMatHoming = new THREE.MeshBasicMaterial({ color: 0xff0066 });
-for (let i = 0; i < CONFIG.maxLasers; i++) {
-    const mesh = new THREE.Mesh(laserGeo, laserMatNormal);
-    mesh.visible = false;
-    mesh.rotation.x = Math.PI / 2;
-    scene.add(mesh);
-    LaserState.meshes.push(mesh);
-}
-
-// 環境
 scene.add(new THREE.AmbientLight(0x404040));
 const sunLight = new THREE.DirectionalLight(0xffffff, 1);
-sunLight.position.set(5, 10, 5);
+sunLight.position.set(5, 5, 5);
 scene.add(sunLight);
 
-const gridHelper = new THREE.GridHelper(1000, 100, 0x004444, 0x001111);
-gridHelper.position.y = -10;
+const gridHelper = new THREE.GridHelper(800, 100, 0x004444, 0x001111);
+gridHelper.position.y = -8;
 scene.add(gridHelper);
 
 const pillars = [];
 for(let i=0; i<30; i++) {
-    const p = new THREE.Mesh(new THREE.BoxGeometry(4, 40, 4), new THREE.MeshPhongMaterial({ color: 0x001122 }));
-    p.position.set((Math.random()-0.5)*120, 10, -i * 30);
+    const p = new THREE.Mesh(new THREE.BoxGeometry(2, 20, 2), new THREE.MeshPhongMaterial({ color: 0x001122 }));
+    p.position.set((Math.random()-0.5)*100, 2, -i * 20);
     scene.add(p);
     pillars.push(p);
 }
 
-// --- 4. ENTITY LOGIC (UCD-F Swap and Pop) ---
-
+// --- LOGIC: SWAP AND POP ---
 function spawnEnemy() {
     if (EnemyState.count >= CONFIG.maxEnemies) return;
     const i = EnemyState.count;
-    EnemyState.posX[i] = (Math.random() - 0.5) * 100;
-    EnemyState.posY[i] = (Math.random() - 0.5) * 50;
-    EnemyState.posZ[i] = -700; 
-    EnemyState.isLocked[i] = 0;
-    
-    const mesh = EnemyState.meshes[i];
-    mesh.visible = true;
-    mesh.material.emissive.setHex(0x220000);
+    EnemyState.posX[i] = (Math.random() - 0.5) * 60;
+    EnemyState.posY[i] = (Math.random() - 0.5) * 30;
+    EnemyState.posZ[i] = -400; 
+    EnemyState.velZ[i] = 1.0 + Math.random() * 2.0; 
+    EnemyState.meshes[i].visible = true;
     EnemyState.count++;
 }
 
 function removeEnemy(index) {
     if (index >= EnemyState.count) return;
-    const last = EnemyState.count - 1;
-    if (index !== last) {
-        EnemyState.posX[index] = EnemyState.posX[last];
-        EnemyState.posY[index] = EnemyState.posY[last];
-        EnemyState.posZ[index] = EnemyState.posZ[last];
-        EnemyState.isLocked[index] = EnemyState.isLocked[last];
+    const lastIdx = EnemyState.count - 1;
+    if (index !== lastIdx) {
+        EnemyState.posX[index] = EnemyState.posX[lastIdx];
+        EnemyState.posY[index] = EnemyState.posY[lastIdx];
+        EnemyState.posZ[index] = EnemyState.posZ[lastIdx];
+        EnemyState.velZ[index] = EnemyState.velZ[lastIdx];
     }
-    EnemyState.meshes[last].visible = false;
+    EnemyState.meshes[lastIdx].visible = false;
     EnemyState.count--;
 }
 
-function spawnLaser(x, y, z, vx, vy, vz, targetIdx = -1) {
-    if (LaserState.count >= CONFIG.maxLasers) return;
-    const i = LaserState.count;
-    LaserState.posX[i] = x;
-    LaserState.posY[i] = y;
-    LaserState.posZ[i] = z;
-    LaserState.velX[i] = vx;
-    LaserState.velY[i] = vy;
-    LaserState.velZ[i] = vz;
-    LaserState.targetIdx[i] = targetIdx;
-    LaserState.life[i] = 1.0;
-
-    const mesh = LaserState.meshes[i];
-    mesh.material = (targetIdx === -1) ? laserMatNormal : laserMatHoming;
-    mesh.visible = true;
-    LaserState.count++;
-}
-
-function removeLaser(index) {
-    if (index >= LaserState.count) return;
-    const last = LaserState.count - 1;
-    if (index !== last) {
-        LaserState.posX[index] = LaserState.posX[last];
-        LaserState.posY[index] = LaserState.posY[last];
-        LaserState.posZ[index] = LaserState.posZ[last];
-        LaserState.velX[index] = LaserState.velX[last];
-        LaserState.velY[index] = LaserState.velY[last];
-        LaserState.velZ[index] = LaserState.velZ[last];
-        LaserState.targetIdx[index] = LaserState.targetIdx[last];
-        LaserState.life[index] = LaserState.life[last];
-    }
-    LaserState.meshes[last].visible = false;
-    LaserState.count--;
-}
-
-// --- 5. INPUT HANDLING ---
+// --- INPUT ---
 const joystickZone = document.getElementById('joystick-zone');
 const joystickStick = document.getElementById('joystick-stick');
-const actionZone = document.getElementById('action-zone');
+let isTouching = false;
 
-let isJoyTouching = false;
 function handleJoystick(e) {
-    if (!isJoyTouching) return;
+    if (!isTouching) return;
     const touch = e.touches ? e.touches[0] : e;
     const rect = joystickZone.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const dx = touch.clientX - cx;
-    const dy = touch.clientY - cy;
-    const dist = Math.min(60, Math.sqrt(dx*dx + dy*dy));
-    joystickStick.style.transform = `translate(calc(-50% + ${dx*dist/60}px), calc(-50% + ${dy*dist/60}px))`;
-    Player.input.x = dx / 60;
-    Player.input.y = -dy / 60;
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const dx = touch.clientX - centerX;
+    const dy = touch.clientY - centerY;
+    const distance = Math.min(60, Math.sqrt(dx*dx + dy*dy));
+    const angle = Math.atan2(dy, dx);
+    const moveX = Math.cos(angle) * distance;
+    const moveY = Math.sin(angle) * distance;
+    joystickStick.style.transform = `translate(calc(-50% + ${moveX}px), calc(-50% + ${moveY}px))`;
+    PlayerState.targetInput.x = moveX / 60;
+    PlayerState.targetInput.y = -moveY / 60; 
 }
 
-joystickZone.addEventListener('touchstart', (e) => { isJoyTouching = true; handleJoystick(e); });
+joystickZone.addEventListener('touchstart', (e) => { isTouching = true; handleJoystick(e); });
 window.addEventListener('touchmove', (e) => { handleJoystick(e); e.preventDefault(); }, { passive: false });
 window.addEventListener('touchend', () => { 
-    isJoyTouching = false; 
-    Player.input.set(0, 0);
+    isTouching = false; 
+    PlayerState.targetInput.x = 0; PlayerState.targetInput.y = 0;
     joystickStick.style.transform = `translate(-50%, -50%)`;
 });
+joystickZone.addEventListener('mousedown', (e) => { isTouching = true; handleJoystick(e); });
+window.addEventListener('mousemove', (e) => { if(isTouching) handleJoystick(e); });
+window.addEventListener('mouseup', () => { isTouching = false; PlayerState.targetInput.x = 0; PlayerState.targetInput.y = 0; joystickStick.style.transform = `translate(-50%, -50%)`; });
 
-// 戦闘操作
-actionZone.addEventListener('touchstart', () => {
-    Player.isLocking = true;
-    actionZone.classList.add('active');
-});
-
-window.addEventListener('touchend', () => {
-    if (Player.isLocking) {
-        if (Player.lockIndices.length > 0) {
-            // マルチロック一斉発射
-            Player.lockIndices.forEach(idx => {
-                spawnLaser(Player.pos.x, Player.pos.y, Player.pos.z, 0, 0, -5, idx);
-                EnemyState.isLocked[idx] = 0;
-            });
-            Player.lockIndices = [];
-        } else {
-            // 通常射撃
-            spawnLaser(Player.pos.x, Player.pos.y, Player.pos.z, 0, 0, -15, -1);
-        }
-        Player.isLocking = false;
-        actionZone.classList.remove('active');
-    }
-});
-
-// PC Mouse
-joystickZone.addEventListener('mousedown', () => { isJoyTouching = true; });
-window.addEventListener('mousemove', (e) => handleJoystick(e));
-window.addEventListener('mouseup', () => { isJoyTouching = false; Player.input.set(0, 0); joystickStick.style.transform = `translate(-50%, -50%)`; });
-actionZone.addEventListener('mousedown', () => { Player.isLocking = true; actionZone.classList.add('active'); });
-
-// --- 6. CORE ENGINE LOOP ---
+// --- PHYSICS ENGINE ---
 const dt = 1/60;
-function update() {
-    // 6.1 Player Physics (ZMF Velocity Verlet)
-    const fx = Player.input.x * 500;
-    const fy = Player.input.y * 500;
+function updatePhysics() {
+    // 1. Player Physics (ZMF)
+    const forceX = PlayerState.targetInput.x * 450; 
+    const forceY = PlayerState.targetInput.y * 450;
+
+    PlayerState.pos[0] += PlayerState.vel[0] * dt + 0.5 * PlayerState.acc[0] * dt * dt;
+    PlayerState.pos[1] += PlayerState.vel[1] * dt + 0.5 * PlayerState.acc[1] * dt * dt;
     
-    Player.pos.x += Player.vel.x * dt + 0.5 * Player.acc.x * dt * dt;
-    Player.pos.y += Player.vel.y * dt + 0.5 * Player.acc.y * dt * dt;
-    Player.prevAcc.copy(Player.acc);
-    Player.acc.x = (fx - CONFIG.zeta * 100 * Player.vel.x) / CONFIG.mass;
-    Player.acc.y = (fy - CONFIG.zeta * 100 * Player.vel.y) / CONFIG.mass;
-    Player.vel.x += 0.5 * (Player.prevAcc.x + Player.acc.x) * dt;
-    Player.vel.y += 0.5 * (Player.prevAcc.y + Player.acc.y) * dt;
-    Player.vel.multiplyScalar(CONFIG.viscosity);
+    PlayerState.prevAcc[0] = PlayerState.acc[0];
+    PlayerState.prevAcc[1] = PlayerState.acc[1];
 
-    // 範囲制限
-    Player.pos.x = Math.max(-30, Math.min(30, Player.pos.x));
-    Player.pos.y = Math.max(-18, Math.min(18, Player.pos.y));
+    PlayerState.acc[0] = (forceX - CONFIG.zeta * 100 * PlayerState.vel[0]) / CONFIG.mass;
+    PlayerState.acc[1] = (forceY - CONFIG.zeta * 100 * PlayerState.vel[1]) / CONFIG.mass;
 
-    // バンク (ZMF)
-    const targetBank = -Player.vel.x * (CONFIG.maxBank * Math.PI / 180) * 0.12;
-    Player.bank += (targetBank - Player.bank) * 0.15;
+    PlayerState.vel[0] += 0.5 * (PlayerState.prevAcc[0] + PlayerState.acc[0]) * dt;
+    PlayerState.vel[1] += 0.5 * (PlayerState.prevAcc[1] + PlayerState.acc[1]) * dt;
 
-    // 6.2 Enemy Lifecycle & Lock Scan
+    PlayerState.vel[0] *= CONFIG.viscosity;
+    PlayerState.vel[1] *= CONFIG.viscosity;
+
+    PlayerState.pos[0] = Math.max(-25, Math.min(25, PlayerState.pos[0]));
+    PlayerState.pos[1] = Math.max(-15, Math.min(15, PlayerState.pos[1]));
+
+    const targetBank = -PlayerState.vel[0] * (CONFIG.maxBank * (Math.PI / 180)) * 0.12;
+    PlayerState.bank += (targetBank - PlayerState.bank) * 0.18;
+
+    // 2. Enemy Lifecycle
     if (Math.random() < CONFIG.enemySpawnRate) spawnEnemy();
-    
+
     for (let i = EnemyState.count - 1; i >= 0; i--) {
-        EnemyState.posZ[i] += CONFIG.worldSpeed;
+        // 機体の移動速度 vel[0] に依存せず、純粋に worldSpeed で前進させる
+        EnemyState.posZ[i] += EnemyState.velZ[i] + CONFIG.worldSpeed;
+
         const mesh = EnemyState.meshes[i];
         mesh.position.set(EnemyState.posX[i], EnemyState.posY[i], EnemyState.posZ[i]);
-        
-        // ロックオンスキャン
-        if (Player.isLocking && Player.lockIndices.length < CONFIG.maxLocks && EnemyState.isLocked[i] === 0) {
-            const dx = EnemyState.posX[i] - Player.pos.x;
-            const dy = EnemyState.posY[i] - Player.pos.y;
-            const dz = EnemyState.posZ[i] - Player.pos.z;
-            const distSq = dx*dx + dy*dy;
-            if (distSq < 20 && dz < -20 && dz > -150) {
-                EnemyState.isLocked[i] = 1;
-                Player.lockIndices.push(i);
-                mesh.material.emissive.setHex(0x00ffff); // ロックオン色
-            }
-        }
+        mesh.rotation.y += 0.05;
 
         if (EnemyState.posZ[i] > 50) {
-            // ロック中リストの整合性を維持
-            const lIdx = Player.lockIndices.indexOf(i);
-            if(lIdx !== -1) Player.lockIndices.splice(lIdx, 1);
             removeEnemy(i);
         }
     }
-
-    // 6.3 Laser Physics (UCD-F Homing)
-    for (let i = LaserState.count - 1; i >= 0; i--) {
-        const target = LaserState.targetIdx[i];
-        
-        if (target === -1) {
-            // 通常レーザー
-            LaserState.posZ[i] += LaserState.velZ[i];
-        } else {
-            // 誘導レーザー
-            const tx = EnemyState.posX[target];
-            const ty = EnemyState.posY[target];
-            const tz = EnemyState.posZ[target];
-            
-            LaserState.posX[i] += (tx - LaserState.posX[i]) * 0.2;
-            LaserState.posY[i] += (ty - LaserState.posY[i]) * 0.2;
-            LaserState.posZ[i] += (tz - LaserState.posZ[i]) * 0.2;
-
-            // 当たり判定
-            const dSq = Math.pow(LaserState.posX[i]-tx, 2) + Math.pow(LaserState.posY[i]-ty, 2) + Math.pow(LaserState.posZ[i]-tz, 2);
-            if (dSq < 4) {
-                removeEnemy(target);
-                LaserState.life[i] = 0;
-            }
-        }
-
-        const mesh = LaserState.meshes[i];
-        mesh.position.set(LaserState.posX[i], LaserState.posY[i], LaserState.posZ[i]);
-        if(target !== -1) mesh.lookAt(EnemyState.posX[target], EnemyState.posY[target], EnemyState.posZ[target]);
-        
-        LaserState.life[i] -= 0.02;
-        if (LaserState.life[i] <= 0 || LaserState.posZ[i] < -800) {
-            removeLaser(i);
-        }
-    }
-
-    // 6.4 Visual Updates
-    shipGroup.position.copy(Player.pos);
-    shipGroup.rotation.z = Player.bank;
-    
-    gridHelper.position.z = (gridHelper.position.z + CONFIG.worldSpeed) % 20;
-    pillars.forEach(p => {
-        p.position.z += CONFIG.worldSpeed;
-        if (p.position.z > 50) {
-            p.position.z = -800;
-            p.position.x = (Math.random()-0.5)*150;
-        }
-    });
-
-    // Camera follow (慣性追従)
-    camera.position.x += (Player.pos.x * 0.4 - camera.position.x) * 0.1;
-    camera.position.y += (Player.pos.y * 0.4 + 3 - camera.position.y) * 0.1;
-    camera.lookAt(Player.pos.x * 0.7, Player.pos.y * 0.7, -50);
-
-    const jerk = Player.acc.length();
-    document.getElementById('speed-lines').style.opacity = Math.min(0.6, jerk * 0.005);
 }
 
+// --- ANIMATION ---
+let lastTime = 0;
 function animate(time) {
     requestAnimationFrame(animate);
-    update();
+    updatePhysics();
+
+    shipGroup.position.set(PlayerState.pos[0], PlayerState.pos[1], 0);
+    shipGroup.rotation.z = PlayerState.bank;
+
+    // ワールド移動速度を完全に CONFIG.worldSpeed 単独で制御
+    const moveStep = CONFIG.worldSpeed; 
+    
+    pillars.forEach(p => {
+        p.position.z += moveStep;
+        if (p.position.z > 20) {
+            p.position.z = -500;
+            p.position.x = (Math.random()-0.5)*100;
+        }
+    });
+    gridHelper.position.z = (gridHelper.position.z + moveStep) % 20;
+
+    camera.position.x += (PlayerState.pos[0] * 0.4 - camera.position.x) * 0.08;
+    camera.position.y += (PlayerState.pos[1] * 0.4 + 2 - camera.position.y) * 0.08;
+    camera.position.z = 12;
+    camera.lookAt(PlayerState.pos[0] * 0.7, PlayerState.pos[1] * 0.7, -20);
+
+    const speedLineOpacity = Math.abs(PlayerState.acc[0] + PlayerState.acc[1]) * 0.01;
+    document.getElementById('speed-lines').style.opacity = Math.min(0.6, speedLineOpacity);
+
     renderer.render(scene, camera);
     
     if (time - lastTime > 500) {
-        document.getElementById('stats').innerText = `FPS: ${Math.round(1000/(time-lastTime)*30)} | TARGETS: ${EnemyState.count} | LOCKS: ${Player.lockIndices.length}`;
+        document.getElementById('stats').innerText = `FPS: ${Math.round(1000/(time-lastTime)*30)} | TARGETS: ${EnemyState.count}`;
         lastTime = time;
     }
 }
 
-// UI Setup
 document.getElementById('param-worldspeed').addEventListener('input', (e) => CONFIG.worldSpeed = parseFloat(e.target.value));
 document.getElementById('param-mass').addEventListener('input', (e) => CONFIG.mass = parseFloat(e.target.value));
+document.getElementById('param-crisp').addEventListener('input', (e) => CONFIG.zeta = parseFloat(e.target.value));
 document.getElementById('param-bank').addEventListener('input', (e) => CONFIG.maxBank = parseFloat(e.target.value));
+document.getElementById('param-brake').addEventListener('input', (e) => CONFIG.viscosity = parseFloat(e.target.value));
 
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
