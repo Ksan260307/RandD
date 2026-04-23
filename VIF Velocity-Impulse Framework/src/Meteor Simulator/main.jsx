@@ -1,34 +1,151 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Moon, Star, AlertTriangle, Coffee, Eye, EyeOff } from 'lucide-react';
+import { Moon, Star, AlertTriangle, Coffee, Eye, EyeOff, Zap } from 'lucide-react';
 
-// --- VIF Core Logic (バックエンド数理モデル) ---
+/**
+ * --- UCD-F: State & Dynamics Layer (SoA Implementation) ---
+ * 連続したメモリ領域を用いて数千の流星を高速処理
+ */
+class MeteorPool {
+  constructor(maxSize) {
+    this.maxSize = maxSize;
+    this.count = 0;
+    
+    // SoA (Structure of Arrays) using TypedArrays
+    this.x = new Float32Array(maxSize);
+    this.y = new Float32Array(maxSize);
+    this.vx = new Float32Array(maxSize);
+    this.vy = new Float32Array(maxSize);
+    this.life = new Float32Array(maxSize); 
+    this.opacity = new Float32Array(maxSize);
+    this.strength = new Float32Array(maxSize);
+    this.quality = new Float32Array(maxSize);
+    this.isSolid = new Uint8Array(maxSize); // 衝突判定を持つかどうかのフラグ
+    this.radius = new Float32Array(maxSize); // 衝突半径
+    
+    // 状態管理用のインデックスプール
+    this.activeIndices = new Int32Array(maxSize);
+    this.activeCount = 0;
+    this.freeIndices = Array.from({ length: maxSize }, (_, i) => i);
+  }
+
+  spawn(x, y, v, strength, quality) {
+    if (this.freeIndices.length === 0) return;
+
+    const idx = this.freeIndices.pop();
+    const angle = Math.PI / 4 + (Math.random() * 0.2 - 0.1);
+    const speed = 250 + Math.random() * 150 + (v * 80);
+
+    this.x[idx] = x;
+    this.y[idx] = y;
+    this.vx[idx] = -Math.cos(angle) * speed;
+    this.vy[idx] = Math.sin(angle) * speed;
+    this.life[idx] = 1.0;
+    this.strength[idx] = strength;
+    this.quality[idx] = quality;
+    this.opacity[idx] = quality * 0.8 + 0.2;
+    
+    // 一部の流星（約20%）に衝突判定を付与
+    this.isSolid[idx] = Math.random() > 0.8 ? 1 : 0;
+    this.radius[idx] = (2 + strength * 0.5) * quality;
+
+    this.activeIndices[this.activeCount++] = idx;
+  }
+
+  update(dt, width, height) {
+    let nextActiveCount = 0;
+
+    // 1. 物理移動の更新
+    for (let i = 0; i < this.activeCount; i++) {
+      const idx = this.activeIndices[i];
+      
+      this.x[idx] += this.vx[idx] * dt;
+      this.y[idx] += this.vy[idx] * dt;
+
+      // 画面外判定
+      if (this.x[idx] < -300 || this.y[idx] > height + 300 || this.x[idx] > width + 300) {
+        this.freeIndices.push(idx);
+      } else {
+        this.activeIndices[nextActiveCount++] = idx;
+      }
+    }
+    this.activeCount = nextActiveCount;
+
+    // 2. 衝突判定と反発（Solidフラグを持つもの同士のみ）
+    // 計算負荷軽減のため、簡易的な総当たり（実用上はグリッド分割が理想だが一部のみなのでこのまま実行）
+    for (let i = 0; i < this.activeCount; i++) {
+      const idxA = this.activeIndices[i];
+      if (this.isSolid[idxA] === 0) continue;
+
+      for (let j = i + 1; j < this.activeCount; j++) {
+        const idxB = this.activeIndices[j];
+        if (this.isSolid[idxB] === 0) continue;
+
+        const dx = this.x[idxB] - this.x[idxA];
+        const dy = this.y[idxB] - this.y[idxA];
+        const distSq = dx * dx + dy * dy;
+        const minDist = this.radius[idxA] + this.radius[idxB] + 15; // 判定を少し広めにとる
+
+        if (distSq < minDist * minDist) {
+          // 衝突応答: ベクトルの反転・偏向
+          const dist = Math.sqrt(distSq);
+          const nx = dx / dist; // 法線
+          const ny = dy / dist;
+          
+          // 相対速度
+          const rvx = this.vx[idxB] - this.vx[idxA];
+          const rvy = this.vy[idxB] - this.vy[idxA];
+          
+          // 法線方向の速度成分
+          const velInNormal = rvx * nx + rvy * ny;
+          
+          if (velInNormal < 0) {
+            // 反発係数 0.8
+            const impulse = -(1.8) * velInNormal;
+            const jx = (impulse / 2) * nx;
+            const jy = (impulse / 2) * ny;
+            
+            this.vx[idxA] -= jx;
+            this.vy[idxA] -= jy;
+            this.vx[idxB] += jx;
+            this.vy[idxB] += jy;
+
+            // 少しだけ品質を下げる（衝突によるノイズ）
+            this.quality[idxA] *= 0.95;
+            this.quality[idxB] *= 0.95;
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * --- VIF Core: Logic Layer ---
+ */
 class VIFController {
   constructor() {
-    this.v = 0;           // 実効ベロシティ
-    this.v_target = 0;    // 目標ベロシティ (UIからの入力)
-    this.strength = 5;    // インパルス強度 (UIからの入力)
-    this.fatigue = 0;     // 蓄積疲労
-    this.quality = 1.0;   // 出力品質
-    this.isBreakdown = false; // 破綻状態
+    this.v = 0;
+    this.v_target = 0;
+    this.strength = 5;
+    this.fatigue = 0;
+    this.quality = 1.0;
+    this.isBreakdown = false;
 
-    // システム定数
-    this.alpha = 0.05;         // ベロシティの追従性（慣性）
-    this.fatigueRate = 0.005;  // 疲労蓄積係数 (ゆっくり鑑賞できるよう大幅に軽減)
-    this.recoveryRate = 2.0;   // 回復係数 (蓄積低下に合わせて調整)
-    this.heatThreshold = 300;  // v * F の限界値（認知オーバーフロー閾値）
-    this.maxFatigue = 80;      // 絶対的な疲労限界
-    this.fatigueVelocityThreshold = 4; // 疲労が蓄積し始めるペースの閾値
+    // 定数
+    this.alpha = 0.05;
+    this.fatigueRate = 0.005; 
+    this.recoveryRate = 2.0;
+    this.heatThreshold = 300;
+    this.maxFatigue = 80;
+    this.fatigueVelocityThreshold = 4;
   }
 
   update(dt) {
-    // 破綻状態（クールダウン）の処理
     if (this.isBreakdown) {
       this.v_target = 0;
       this.v += this.alpha * (this.v_target - this.v);
-      this.fatigue -= this.recoveryRate * 1.5 * dt; // ソフトリカバリ中は回復が少し早い
+      this.fatigue -= this.recoveryRate * 1.5 * dt;
       this.quality = 0;
-
-      // 疲労が抜けきったら復帰
       if (this.fatigue <= 0) {
         this.fatigue = 0;
         this.isBreakdown = false;
@@ -36,164 +153,145 @@ class VIFController {
       return;
     }
 
-    // 通常状態のロジック
-    // 1. ベロシティの慣性更新
     this.v += this.alpha * (this.v_target - this.v);
     
-    // 2. 疲労と回復の計算
     if (this.v_target === 0 && this.v < 0.5) {
-      // Recoveryモード (v=0)
       this.fatigue -= this.recoveryRate * dt;
       if (this.fatigue < 0) this.fatigue = 0;
     } else if (this.v >= this.fatigueVelocityThreshold) {
-      // 稼働中: ペースが閾値(4)以上の時のみ疲労が蓄積される
       this.fatigue += (this.v * this.strength) * this.fatigueRate * dt;
     }
 
-    // 3. 破綻（オーバーフロー）判定
     const currentHeat = this.v * this.fatigue;
     if (currentHeat > this.heatThreshold || this.fatigue > this.maxFatigue) {
       this.isBreakdown = true;
     }
 
-    // 4. 品質の計算 (ベロシティと疲労に反比例)
-    // 熟練度Sは固定値として省略
     const denominator = 1 + (0.05 * this.v) + (0.02 * this.fatigue);
     this.quality = Math.max(0, 1 / denominator);
   }
 }
 
-// --- メインコンポーネント ---
 export default function App() {
   const canvasRef = useRef(null);
   const vifRef = useRef(new VIFController());
+  const poolRef = useRef(new MeteorPool(5000)); 
   
-  // UI表示用のステート (ロジック状態を間引いて反映)
   const [uiState, setUiState] = useState({
     velocity: 0,
     strength: 5,
     quality: 100,
     fatigueLevel: 0,
     isBreakdown: false,
+    activeCount: 0
   });
 
-  // UIの表示/非表示トグル用のステート
   const [showUI, setShowUI] = useState(true);
-
-  const requestRef = useRef();
-  const meteorsRef = useRef([]);
   const lastTimeRef = useRef(performance.now());
 
-  // 流星クラス
-  class Meteor {
-    constructor(vif) {
-      this.x = Math.random() * window.innerWidth * 1.5;
-      this.y = -50;
-      this.speed = 300 + Math.random() * 200 + (vif.v * 50);
-      this.angle = Math.PI / 4 + (Math.random() * 0.1 - 0.05); // 約45度
-      
-      // VIFモデルのパラメータを視覚化に反映
-      const q = vif.quality;
-      this.length = (50 + vif.strength * 10) * (0.5 + q * 0.5); // 品質と強度に依存
-      this.thickness = (1 + vif.strength * 0.3) * q;
-      this.opacity = q * 0.8 + 0.2;
-      
-      // 品質が高いほど美しく(青〜紫)、低いほどくすむ(灰〜赤)
-      const r = Math.floor(255 * (1 - q) + 100 * q);
-      const g = Math.floor(200 * q);
-      const b = Math.floor(255 * q + 100 * (1 - q));
-      this.color = `rgba(${r}, ${g}, ${b}, ${this.opacity})`;
-      
-      this.active = true;
-    }
-
-    update(dt) {
-      this.x -= Math.cos(this.angle) * this.speed * dt;
-      this.y += Math.sin(this.angle) * this.speed * dt;
-      if (this.y > window.innerHeight + 100 || this.x < -100) {
-        this.active = false;
-      }
-    }
-
-    draw(ctx) {
-      ctx.beginPath();
-      ctx.moveTo(this.x, this.y);
-      ctx.lineTo(
-        this.x + Math.cos(this.angle) * this.length,
-        this.y - Math.sin(this.angle) * this.length
-      );
-      ctx.strokeStyle = this.color;
-      ctx.lineWidth = this.thickness;
-      ctx.lineCap = 'round';
-      ctx.stroke();
-      
-      // 先頭の輝き（品質が高い時）
-      if (this.opacity > 0.6) {
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.thickness * 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity})`;
-        ctx.fill();
-      }
-    }
-  }
-
-  // アニメーションループ
   const animate = (time) => {
-    const dt = (time - lastTimeRef.current) / 1000;
+    const dt = Math.min((time - lastTimeRef.current) / 1000, 0.1); 
     lastTimeRef.current = time;
-    const vif = vifRef.current;
 
-    // VIFロジックの更新
+    const vif = vifRef.current;
+    const pool = poolRef.current;
+    const canvas = canvasRef.current;
+    
     vif.update(dt);
 
-    // キャンバス描画
-    const canvas = canvasRef.current;
     if (canvas) {
       const ctx = canvas.getContext('2d');
-      // 疲労度に応じて空の色を少し赤く濁らせる
-      const fatigueRatio = Math.min(1, vif.fatigue / vif.maxFatigue);
-      const bgR = Math.floor(10 + fatigueRatio * 40);
-      const bgG = Math.floor(15 - fatigueRatio * 10);
-      const bgB = Math.floor(30 - fatigueRatio * 15);
-      
-      // 軌跡を残すための半透明クリア
-      ctx.fillStyle = `rgba(${bgR}, ${bgG}, ${bgB}, 0.3)`;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const { width, height } = canvas;
 
-      // 流星の生成（ベロシティに比例）
+      // 1. Logic Update
+      pool.update(dt, width, height);
+
+      // 2. Spawn
       if (!vif.isBreakdown && vif.v > 0) {
-        // v=10の時、1秒間に約10個生成されるような確率
-        const spawnRate = vif.v * 1.0; 
-        if (Math.random() < spawnRate * dt) {
-          meteorsRef.current.push(new Meteor(vif));
+        const spawnCount = Math.floor(vif.v * 1.2 * Math.random());
+        for(let i = 0; i < spawnCount; i++) {
+          pool.spawn(
+            Math.random() * width * 1.5, 
+            -150, 
+            vif.v, 
+            vif.strength, 
+            vif.quality
+          );
         }
       }
 
-      // 流星の更新と描画
-      meteorsRef.current.forEach(m => {
-        m.update(dt);
-        m.draw(ctx);
-      });
-      // 画面外に出たものを削除
-      meteorsRef.current = meteorsRef.current.filter(m => m.active);
+      // 3. Render Layer
+      const fatigueRatio = Math.min(1, vif.fatigue / vif.maxFatigue);
+      const bgR = Math.floor(5 + fatigueRatio * 30);
+      const bgG = Math.floor(10 - fatigueRatio * 5);
+      const bgB = Math.floor(25 - fatigueRatio * 15);
+      
+      ctx.fillStyle = `rgba(${bgR}, ${bgG}, ${bgB}, 0.25)`; 
+      ctx.fillRect(0, 0, width, height);
+
+      for (let i = 0; i < pool.activeCount; i++) {
+        const idx = pool.activeIndices[i];
+        const x = pool.x[idx];
+        const y = pool.y[idx];
+        const q = pool.quality[idx];
+        const s = pool.strength[idx];
+        const solid = pool.isSolid[idx];
+        
+        const len = (40 + s * 10) * (0.5 + q * 0.5);
+        const thickness = (1 + s * 0.4) * q;
+        
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        // 速度ベクトルに合わせて尾を引く
+        const tailX = x - pool.vx[idx] * 0.05;
+        const tailY = y - pool.vy[idx] * 0.05;
+        ctx.lineTo(tailX, tailY);
+        
+        const r = Math.floor(255 * (1 - q) + 150 * q);
+        const g = Math.floor(200 * q);
+        const b = Math.floor(255 * q + 150 * (1 - q));
+        
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${pool.opacity[idx]})`;
+        ctx.lineWidth = thickness;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        // 衝突判定がある流星は核（コア）を強調
+        if (solid === 1) {
+          ctx.beginPath();
+          ctx.arc(x, y, thickness * 1.5, 0, Math.PI * 2);
+          ctx.fillStyle = q > 0.5 ? 'rgba(255, 255, 255, 0.9)' : 'rgba(200, 200, 200, 0.5)';
+          ctx.fill();
+          // 外光
+          ctx.beginPath();
+          ctx.arc(x, y, thickness * 4, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.2)`;
+          ctx.fill();
+        } else if (q > 0.8) {
+          // 通常の高品質流星の輝き
+          ctx.beginPath();
+          ctx.arc(x, y, thickness * 0.8, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+          ctx.fill();
+        }
+      }
     }
 
-    // UI更新（約100msに1回程度に間引いて負荷軽減）
     if (time % 100 < 20) {
       setUiState({
         velocity: vif.v_target,
         strength: vif.strength,
         quality: Math.round(vif.quality * 100),
-        // つかれ具合（v * f の限界、または絶対限界に対する割合）
         fatigueLevel: Math.min(100, Math.max(
           (vif.v * vif.fatigue / vif.heatThreshold) * 100,
           (vif.fatigue / vif.maxFatigue) * 100
         )),
         isBreakdown: vif.isBreakdown,
+        activeCount: pool.activeCount
       });
     }
 
-    requestRef.current = requestAnimationFrame(animate);
+    requestAnimationFrame(animate);
   };
 
   useEffect(() => {
@@ -205,163 +303,148 @@ export default function App() {
     };
     window.addEventListener('resize', handleResize);
     handleResize();
-
-    requestRef.current = requestAnimationFrame(animate);
+    const animId = requestAnimationFrame(animate);
     return () => {
       window.removeEventListener('resize', handleResize);
-      cancelAnimationFrame(requestRef.current);
+      cancelAnimationFrame(animId);
     };
   }, []);
 
-  // UI入力ハンドラ
-  const handleVelocityChange = (e) => {
-    if (vifRef.current.isBreakdown) return;
-    vifRef.current.v_target = parseFloat(e.target.value);
-  };
-
-  const handleStrengthChange = (e) => {
-    if (vifRef.current.isBreakdown) return;
-    vifRef.current.strength = parseFloat(e.target.value);
-  };
-
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-slate-900 text-white font-sans touch-none selection:bg-transparent">
-      {/* Background Canvas */}
+    <div className="relative w-full h-screen overflow-hidden bg-slate-950 text-white font-sans touch-none selection:bg-transparent">
+      {/* Meteor Canvas */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full block cursor-pointer"
         onClick={() => setShowUI(!showUI)}
       />
 
-      {/* Breakdown (オーバーヒート) オーバーレイ */}
+      {/* Stats UI */}
+      {!uiState.isBreakdown && (
+        <div className="absolute bottom-4 left-4 text-[10px] text-slate-500 font-mono pointer-events-none">
+          UCD-F POOL: {uiState.activeCount} / 5000 | COLLISION: ENABLED
+        </div>
+      )}
+
+      {/* Breakdown Overlay */}
       {uiState.isBreakdown && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-900/40 backdrop-blur-sm z-20 transition-all duration-500">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-950/50 backdrop-blur-md z-20">
           <AlertTriangle size={64} className="text-red-400 mb-4 animate-pulse" />
-          <h2 className="text-2xl font-bold text-red-200 mb-2">オーバーヒート！</h2>
-          <p className="text-red-100/80 mb-6 text-center px-6">
-            無理をして星を呼びすぎました。<br/>つかれが完全に抜けるまで休んでください。
-          </p>
-          <div className="w-48 h-2 bg-slate-800 rounded-full overflow-hidden">
+          <h2 className="text-2xl font-bold text-red-200 mb-2">システム限界超過</h2>
+          <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden mt-4">
             <div 
               className="h-full bg-red-500 transition-all duration-300"
               style={{ width: `${uiState.fatigueLevel}%` }}
             ></div>
           </div>
-          <p className="text-xs text-red-300/60 mt-2">Recovery in progress...</p>
         </div>
       )}
 
       {/* UI Toggle Button */}
       <button 
         onClick={() => setShowUI(!showUI)}
-        className="absolute top-4 right-4 z-30 p-2 bg-slate-800/50 hover:bg-slate-700/50 text-slate-300 rounded-full backdrop-blur-md transition-colors"
+        className="absolute top-6 right-6 z-30 p-3 bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 rounded-2xl backdrop-blur-xl border border-slate-700/50 transition-all shadow-xl"
       >
-        {showUI ? <EyeOff size={24} /> : <Eye size={24} />}
+        {showUI ? <EyeOff size={22} /> : <Eye size={22} />}
       </button>
 
-      {/* Main UI Overlay */}
-      <div className={`absolute inset-0 flex flex-col justify-between p-4 sm:p-6 pb-8 transition-opacity duration-500 ${showUI ? 'opacity-100 pointer-events-none' : 'opacity-0 pointer-events-none'}`}>
+      {/* Main UI */}
+      <div className={`absolute inset-0 flex flex-col justify-between p-6 pb-12 transition-all duration-700 ease-in-out ${showUI ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
         
-        {/* Header / Status Meters */}
-        <div className={`flex flex-col gap-4 w-full max-w-md mx-auto z-10 mt-12 ${showUI ? 'pointer-events-auto' : 'pointer-events-none'}`}>
-          {/* Quality Meter */}
-          <div className="bg-slate-800/60 backdrop-blur-md p-4 rounded-2xl border border-slate-700/50 shadow-lg">
-            <div className="flex justify-between items-center mb-2">
+        {/* Top Status */}
+        <div className="flex flex-col gap-3 w-full max-sm mx-auto z-10 pointer-events-auto">
+          <div className="bg-slate-900/60 backdrop-blur-2xl p-5 rounded-3xl border border-white/5 shadow-2xl">
+            <div className="flex justify-between items-center mb-3">
               <div className="flex items-center gap-2">
-                <Star size={18} className={uiState.quality > 80 ? "text-yellow-300" : "text-slate-400"} />
-                <span className="font-medium text-sm text-slate-200">星の美しさ</span>
+                <Star size={18} className={uiState.quality > 80 ? "text-blue-400 fill-blue-400" : "text-slate-500"} />
+                <span className="font-semibold text-xs text-slate-400 tracking-wider uppercase">星の美しさ (Quality)</span>
               </div>
-              <span className="text-sm font-bold">{uiState.quality}%</span>
+              <span className="text-lg font-bold font-mono">{uiState.quality}%</span>
             </div>
-            <div className="w-full h-2.5 bg-slate-700 rounded-full overflow-hidden">
+            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
               <div 
-                className="h-full transition-all duration-300"
+                className="h-full transition-all duration-500 rounded-full"
                 style={{ 
                   width: `${uiState.quality}%`,
-                  background: uiState.quality > 80 ? 'linear-gradient(90deg, #3b82f6, #8b5cf6, #ec4899)' : 
-                              uiState.quality > 40 ? '#60a5fa' : '#64748b'
+                  background: uiState.quality > 70 ? 'linear-gradient(90deg, #60a5fa, #c084fc)' : '#475569'
                 }}
               ></div>
             </div>
           </div>
 
-          {/* Fatigue Meter */}
-          <div className="bg-slate-800/60 backdrop-blur-md p-4 rounded-2xl border border-slate-700/50 shadow-lg">
-            <div className="flex justify-between items-center mb-2">
+          <div className="bg-slate-900/60 backdrop-blur-2xl p-5 rounded-3xl border border-white/5 shadow-2xl">
+            <div className="flex justify-between items-center mb-3">
               <div className="flex items-center gap-2">
-                <Coffee size={18} className={uiState.fatigueLevel > 70 ? "text-red-400" : "text-slate-400"} />
-                <span className="font-medium text-sm text-slate-200">つかれ具合</span>
+                <Coffee size={18} className={uiState.fatigueLevel > 75 ? "text-orange-400" : "text-slate-500"} />
+                <span className="font-semibold text-xs text-slate-400 tracking-wider uppercase">つかれ (Fatigue)</span>
               </div>
               <span className="text-sm font-bold text-slate-300">
-                {uiState.velocity === 0 && uiState.fatigueLevel > 0 ? "回復中..." : `${Math.round(uiState.fatigueLevel)}%`}
+                {uiState.velocity === 0 && uiState.fatigueLevel > 0 ? "回復中" : `${Math.round(uiState.fatigueLevel)}%`}
               </span>
             </div>
-            <div className="w-full h-2.5 bg-slate-700 rounded-full overflow-hidden">
+            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
               <div 
-                className="h-full transition-all duration-300"
+                className="h-full transition-all duration-300 rounded-full"
                 style={{ 
                   width: `${uiState.fatigueLevel}%`,
-                  backgroundColor: uiState.fatigueLevel > 80 ? '#ef4444' : 
-                                   uiState.fatigueLevel > 50 ? '#f59e0b' : '#34d399'
+                  backgroundColor: uiState.fatigueLevel > 80 ? '#f87171' : 
+                                   uiState.fatigueLevel > 50 ? '#fbbf24' : '#10b981'
                 }}
               ></div>
             </div>
           </div>
         </div>
 
-        {/* Controls */}
-        <div className={`w-full max-w-md mx-auto z-10 bg-slate-900/80 backdrop-blur-xl p-6 rounded-3xl border border-slate-700/50 shadow-2xl ${showUI ? 'pointer-events-auto' : 'pointer-events-none'}`}>
+        {/* Bottom Controls */}
+        <div className="w-full max-w-sm mx-auto z-10 pointer-events-auto bg-slate-900/90 backdrop-blur-3xl p-8 rounded-[40px] border border-white/10 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.6)]">
           
-          {/* Velocity Slider */}
-          <div className="mb-8">
-            <div className="flex justify-between items-end mb-4">
-              <label className="font-bold text-lg text-slate-100 flex items-center gap-2">
-                <Moon size={20} className="text-indigo-400"/>
-                星を呼ぶペース
+          {/* Velocity Control */}
+          <div className="mb-10">
+            <div className="flex justify-between items-center mb-6">
+              <label className="font-bold text-xl text-white flex items-center gap-3">
+                <Zap size={22} className="text-blue-400 fill-blue-400/20"/>
+                ペース
               </label>
-              <span className="text-sm font-mono text-indigo-300 bg-indigo-900/30 px-2 py-1 rounded-md">
-                {uiState.velocity === 0 ? "ひとやすみ" : `Lv. ${uiState.velocity}`}
-              </span>
+              <div className="flex flex-col items-end">
+                <span className="text-2xl font-black text-blue-400 font-mono leading-none">
+                  {uiState.velocity === 0 ? "0" : uiState.velocity}
+                </span>
+              </div>
             </div>
             <input 
               type="range" 
               min="0" max="10" step="1"
               value={uiState.velocity}
-              onChange={handleVelocityChange}
+              onChange={(e) => vifRef.current.v_target = parseFloat(e.target.value)}
               disabled={uiState.isBreakdown}
-              className="w-full h-3 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400"
+              className="w-full h-4 bg-slate-800 rounded-full appearance-none cursor-pointer accent-blue-500 transition-all hover:bg-slate-700"
             />
-            <div className="flex justify-between text-xs text-slate-500 mt-2 px-1">
-              <span>0 (休む)</span>
-              <span>Lv.4以上で疲労</span>
-              <span>速い</span>
+            <div className="flex justify-between text-[10px] font-bold text-slate-600 mt-4 px-1 uppercase tracking-widest">
+              <span>Recovery</span>
+              <span>Stability</span>
+              <span>Max</span>
             </div>
           </div>
 
-          {/* Strength Slider */}
+          {/* Strength Control */}
           <div>
-            <div className="flex justify-between items-end mb-4">
-              <label className="font-bold text-md text-slate-300">
-                星の濃さ (願いの深さ)
+            <div className="flex justify-between items-center mb-6">
+              <label className="font-bold text-lg text-slate-300">
+                星の濃さ
               </label>
-              <span className="text-sm font-mono text-pink-300 bg-pink-900/30 px-2 py-1 rounded-md">
-                Lv. {uiState.strength}
+              <span className="text-xl font-bold text-indigo-400 font-mono">
+                {uiState.strength}
               </span>
             </div>
             <input 
               type="range" 
               min="1" max="10" step="1"
               value={uiState.strength}
-              onChange={handleStrengthChange}
+              onChange={(e) => vifRef.current.strength = parseFloat(e.target.value)}
               disabled={uiState.isBreakdown}
-              className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-pink-500 hover:accent-pink-400"
+              className="w-full h-2.5 bg-slate-800 rounded-full appearance-none cursor-pointer accent-indigo-500 hover:bg-slate-700"
             />
-            <div className="flex justify-between text-xs text-slate-500 mt-2 px-1">
-              <span>浅く</span>
-              <span>深く</span>
-            </div>
           </div>
-
         </div>
       </div>
     </div>
