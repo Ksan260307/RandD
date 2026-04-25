@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>INFINITY TETRIS</title>
+    <style>
+        :root {
+            --bg-color: #030805;
+            --panel-bg: #071207;
+            --text-main: #33ff33;
+            --text-dim: #1a991a;
+            --accent: #00ffff;
+            --alert: #ff3333;
+            --border: #22aa22;
+        }
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Courier New', Courier, monospace;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            text-shadow: 0 0 2px rgba(51, 255, 51, 0.5);
+        }
+        .ucd-container {
+            display: flex;
+            flex-direction: row;
+            gap: 20px;
+            padding: 20px;
+            border: 1px solid var(--border);
+            background: var(--panel-bg);
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.05);
+            position: relative;
+            z-index: 1;
+            max-width: 100vw;
+            max-height: 100vh;
+            box-sizing: border-box;
+        }
+        /* スキャンラインエフェクト */
+        .ucd-container::after {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(
+                rgba(18, 16, 16, 0) 50%,
+                rgba(0, 0, 0, 0.25) 50%
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .panel {
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            z-index: 2;
+        }
+        h2 {
+            margin: 0;
+            font-size: 1.2em;
+            color: var(--accent);
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 5px;
+            letter-spacing: 1px;
+        }
+        h3 {
+            margin: 0;
+            font-size: 1em;
+            color: var(--text-dim);
+            border-left: 3px solid var(--accent);
+            padding-left: 5px;
+        }
+        p {
+            margin: 0;
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+        .canvas-wrapper {
+            border: 2px solid var(--border);
+            padding: 4px;
+            background: #000;
+            position: relative;
+            z-index: 2;
+            overflow-y: auto; /* 追加された盤面を見れるように縦スクロールを許可 */
+            overflow-x: hidden;
+            flex-grow: 1;
+            text-align: center; /* キャンバスを中央に配置 */
+        }
+        canvas {
+            display: inline-block;
+            image-rendering: pixelated; /* ピクセルパーフェクト描画 */
+            vertical-align: top;
+        }
+        .console {
+            flex-grow: 1;
+            border: 1px solid #114411;
+            padding: 8px;
+            font-size: 0.75em;
+            overflow: hidden;
+            background: rgba(0, 20, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            word-wrap: break-word;
+        }
+        .console div {
+            margin-bottom: 2px;
+            opacity: 0.9;
+        }
+        .lore {
+            font-size: 0.7em;
+            color: #559955;
+            border-top: 1px dashed var(--text-dim);
+            padding-top: 10px;
+        }
+        .stat-value {
+            color: var(--accent);
+            font-weight: bold;
+            float: right;
+        }
+        .row {
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid #113311;
+            padding-bottom: 2px;
+        }
+        /* Mobile Touch Controls */
+        .mobile-controls {
+            display: none;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .btn {
+            background: #0a220a;
+            border: 1px solid var(--text-dim);
+            color: var(--accent);
+            padding: 15px;
+            text-align: center;
+            font-family: inherit;
+            font-weight: bold;
+            cursor: pointer;
+            user-select: none;
+            touch-action: manipulation;
+        }
+        .btn:active {
+            background: var(--text-dim);
+            color: #000;
+        }
+        @media (max-width: 1000px) {
+            .ucd-container { 
+                flex-direction: column; 
+                gap: 10px; 
+                overflow-y: auto; 
+                padding: 10px;
+            }
+            .panel { width: 100%; }
+            .canvas-wrapper { overflow: auto; min-height: 50vh; display: flex; flex-direction: column; }
+            .console { height: 100px; flex-grow: 0; }
+            .mobile-controls { display: grid; }
+            .lore { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="ucd-container">
+    <!-- Left Panel: Diagnostics -->
+    <div class="panel">
+        <h2>INFINITY TETRIS Engine</h2>
+        
+        <h3>SYSTEM METRICS</h3>
+        <div class="row"><span>Active Topologies:</span><span class="stat-value" id="stat-alive">100 / 100</span></div>
+        <div class="row"><span>State Buffer (SoA):</span><span class="stat-value">Uint32Array</span></div>
+        <div class="row"><span>Pool Capacity:</span><span class="stat-value" id="stat-pool">40,000 Entities</span></div>
+        <div class="row"><span>Active / Z-Lock:</span><span class="stat-value" id="stat-alloc">0 / 0</span></div>
+        <div class="row"><span>Time Dilation:</span><span class="stat-value" id="stat-dilation">1.00x</span></div>
+        <div class="row"><span>Total Entropy:</span><span class="stat-value" id="stat-score">0</span></div>
+
+        <h3>TERMINAL</h3>
+        <div class="console" id="console"></div>
+    </div>
+
+    <!-- Center: View Layer -->
+    <div class="canvas-wrapper">
+        <canvas id="viewLayer"></canvas>
+    </div>
+
+    <!-- Right Panel: Controls & Protocol Lore -->
+    <div class="panel">
+        <h3>INPUT PIPELINE</h3>
+        <p>[ ← ] [ → ] : Shift All Topologies</p>
+        <p>[ ↑ ] : Rotate All Structures</p>
+        <p>[ ↓ ] : Accelerate Time</p>
+        <p>[ Space ] : Force Zero-Lock</p>
+        <p>[ A ] : Toggle Auto-Pilot (AI)</p>
+        <p>[ R ] : Reset All Topologies</p>
+        <p>[ + ] : Add Row (10 Topologies)</p>
+        <p>[ - ] : Remove Row</p>
+        <p style="color:var(--alert); font-size:0.8em; margin-top:5px;">* Broadcast Input affects all instances simultaneously.</p>
+
+        <div class="mobile-controls" style="grid-template-columns: repeat(4, 1fr);">
+            <button class="btn" id="btn-left" style="grid-column: span 1;">◀</button>
+            <button class="btn" id="btn-rot" style="grid-column: span 2;">↻</button>
+            <button class="btn" id="btn-right" style="grid-column: span 1;">▶</button>
+            <button class="btn" id="btn-down" style="grid-column: span 4;">▼ ACCELERATE</button>
+            <button class="btn" id="btn-drop" style="grid-column: span 4; border-color: var(--alert);">HARD DROP</button>
+            <button class="btn" id="btn-ai" style="grid-column: span 4; border-color: var(--accent);">AUTO-PILOT OFF</button>
+            <button class="btn" id="btn-sub" style="grid-column: span 2; border-color: var(--text-dim);">- REMOVE</button>
+            <button class="btn" id="btn-add" style="grid-column: span 2; border-color: var(--text-dim);">+ ADD</button>
+            <button class="btn" id="btn-reset" style="grid-column: span 4; border-color: var(--alert);">RESET ALL</button>
+        </div>
+
+        <div class="lore">
+            <strong>ARCHITECTURE SPECS:</strong><br><br>
+            * 32bit Bit-packed SoA applied.<br>
+            * Zero-Allocation memory policy enforced (Dynamic Reallocation on expansion).<br>
+            * Infinite Virtual Memory Pool.<br>
+            * Broadcast Input Synchronization.<br>
+            * Deterministic Ring Buffer linked.<br>
+            <br>
+            <i>"The system maintains spatial continuum via entity ruination and terrainization across multiverses."</i>
+        </div>
+    </div>
+</div>
+
+<script>
+    /**
+     * UCD-F_ABC Core Protocol Implementation
+     * Sub-system: Multi-Dimensional Topology Grid (Infinitely Expandable Tetris Emulator)
+     */
+
+    // --- 1. Bit-packing Macros (SoA Data Access) ---
+    // [0-3] Type (4bit), [4-11] X (8bit), [12-19] Y (8bit), [24-26] State (3bit)
+    function packEntity(type, x, y, state) {
+        return ((type & 0xF) | ((x & 0xFF) << 4) | ((y & 0xFF) << 12) | ((state & 0x7) << 24)) >>> 0;
+    }
+    function unpackType(entity) { return entity & 0xF; }
+    function unpackX(entity) { return (entity >> 4) & 0xFF; }
+    function unpackY(entity) { return (entity >> 12) & 0xFF; }
+    function unpackState(entity) { return (entity >> 24) & 0x7; }
+    
+    function setX(entity, x) { return ((entity & ~(0xFF << 4)) | ((x & 0xFF) << 4)) >>> 0; }
+    function setY(entity, y) { return ((entity & ~(0xFF << 12)) | ((y & 0xFF) << 12)) >>> 0; }
+    function setState(entity, state) { return ((entity & ~(0x7 << 24)) | ((state & 0x7) << 24)) >>> 0; }
+
+    // --- 2. System States ---
+    const STATE_PROBABILITY_CLOUD = 0; // Empty / 非観測領域の確率雲
+    const STATE_ACTIVE = 1;            // Falling / 実体化された動態
+    const STATE_ZEROLOCK = 2;          // Terrain / 破綻・地形化
+
+    // --- 3. Multi-Dimensional Memory Layout (Dynamic Memory Pool) ---
+    let currentCapacity = 100; // 初期物理メモリプールのキャパシティ
+    let activeInstances = 100;  // 現在の論理稼働数（初期100画面）
+    const ENTITIES_PER_INSTANCE = 400; // 10x20 = 200 + Buffer
+    
+    // Arrays will be dynamically reallocated if activeInstances exceeds currentCapacity
+    let stateBuffer = new Uint32Array(ENTITIES_PER_INSTANCE * currentCapacity);
+    
+    // Spatial Hash Grid (O(1) Collision Detection) for all instances
+    const GRID_W = 10;
+    const GRID_H = 20;
+    let mortonHashGrid = new Uint8Array(GRID_W * GRID_H * currentCapacity);
+
+    // Instance specific states
+    let isRunnings = new Uint8Array(currentCapacity);
+    let scores = new Uint32Array(currentCapacity);
+    let aiQueues = Array.from({length: currentCapacity}, () => []);
+
+    // --- 4. Logic Variables ---
+    let globalIsRunning = false;
+    let isAutoPilot = false;
+    let totalScore = 0;
+    let baseDropInterval = 60; // Fixed-point tick baseline
+    let dropTimer = 0;
+    let timeDilation = 1.0;
+    const actionBuffer = []; // Deterministic Input Logging
+
+    // Tetromino Definitions (Colors & Topology)
+    const COLORS = [
+        "#000000",
+        "#00FFFF", // I (Cyan)
+        "#0000FF", // J (Blue)
+        "#FFA500", // L (Orange)
+        "#FFFF00", // O (Yellow)
+        "#00FF00", // S (Green)
+        "#800080", // T (Purple)
+        "#FF0000"  // Z (Red)
+    ];
+
+    // Origin (Pivot) is always at index 0 for mathematical rotation
+    const SHAPES = [
+        [], // Empty
+        [{x:0,y:1}, {x:-1,y:1}, {x:1,y:1}, {x:2,y:1}], // I
+        [{x:0,y:1}, {x:-1,y:0}, {x:-1,y:1}, {x:1,y:1}], // J
+        [{x:0,y:1}, {x:1,y:0}, {x:-1,y:1}, {x:1,y:1}], // L
+        [{x:0,y:1}, {x:0,y:0}, {x:1,y:0}, {x:1,y:1}], // O
+        [{x:0,y:1}, {x:0,y:0}, {x:1,y:0}, {x:-1,y:1}], // S
+        [{x:0,y:1}, {x:0,y:0}, {x:-1,y:0}, {x:1,y:1}], // T
+        [{x:0,y:1}, {x:-1,y:0}, {x:0,y:0}, {x:1,y:1}]  // Z
+    ];
+
+    // --- 5. Logging System ---
+    const logs = [];
+    function logSystem(msg) {
+        const timestamp = new Date().toISOString().substring(11,23);
+        logs.push(`[${timestamp}] ${msg}`);
+        if(logs.length > 8) logs.shift();
+        
+        const el = document.getElementById('console');
+        el.innerHTML = logs.map(l => {
+            if(l.includes("CRITICAL") || l.includes("HALTED") || l.includes("REDUCED")) return `<div style="color:var(--alert)">${l}</div>`;
+            if(l.includes("EXPANDED") || l.includes("ENGAGED") || l.includes("COMPLETE") || l.includes("REALLOCATING")) return `<div style="color:var(--accent)">${l}</div>`;
+            return `<div>${l}</div>`;
+        }).join('');
+        el.scrollTop = el.scrollHeight;
+    }
+
+    // --- Memory Expansion Utility ---
+    function expandMemoryPool(newCapacity) {
+        logSystem(`REALLOCATING MEMORY POOL TO ${newCapacity} INSTANCES...`);
+        
+        const newMaxEntities = ENTITIES_PER_INSTANCE * newCapacity;
+        
+        const newStateBuffer = new Uint32Array(newMaxEntities);
+        newStateBuffer.set(stateBuffer);
+        stateBuffer = newStateBuffer;
+        
+        const newMortonHashGrid = new Uint8Array(GRID_W * GRID_H * newCapacity);
+        newMortonHashGrid.set(mortonHashGrid);
+        mortonHashGrid = newMortonHashGrid;
+        
+        const newIsRunnings = new Uint8Array(newCapacity);
+        newIsRunnings.set(isRunnings);
+        isRunnings = newIsRunnings;
+        
+        const newScores = new Uint32Array(newCapacity);
+        newScores.set(scores);
+        scores = newScores;
+        
+        for(let i = currentCapacity; i < newCapacity; i++) {
+            aiQueues.push([]);
+        }
+        
+        currentCapacity = newCapacity;
+        logSystem("MEMORY POOL REALLOCATION COMPLETE.");
+    }
+
+
+    // --- 6. Core Dynamics Functions (Per Instance) ---
+
+    function buildSpatialHash(idx) {
+        const gridOffset = idx * (GRID_W * GRID_H);
+        for(let i=0; i<GRID_W * GRID_H; i++) mortonHashGrid[gridOffset + i] = 0;
+
+        const bufferStart = idx * ENTITIES_PER_INSTANCE;
+        const bufferEnd = bufferStart + ENTITIES_PER_INSTANCE;
+
+        for(let i=bufferStart; i<bufferEnd; i++) {
+            const ent = stateBuffer[i];
+            if (unpackState(ent) === STATE_ZEROLOCK) {
+                const x = unpackX(ent);
+                const y = unpackY(ent);
+                if(y >= 0 && y < GRID_H && x >= 0 && x < GRID_W) {
+                    mortonHashGrid[gridOffset + y * GRID_W + x] = 1;
+                }
+            }
+        }
+    }
+
+    function materializeEntity(idx) {
+        const type = Math.floor(Math.random() * 7) + 1;
+        const shape = SHAPES[type];
+        const spawnX = 4;
+        const spawnY = 0;
+        const gridOffset = idx * (GRID_W * GRID_H);
+
+        for(let pt of shape) {
+            const chkX = spawnX + pt.x;
+            const chkY = spawnY + pt.y;
+            if(chkY >= 0 && mortonHashGrid[gridOffset + chkY * GRID_W + chkX] === 1) {
+                isRunnings[idx] = 0;
+                logSystem(`CRITICAL: Topology Collapse at Sector [${idx}].`);
+                return;
+            }
+        }
+
+        let materialized = 0;
+        const bufferStart = idx * ENTITIES_PER_INSTANCE;
+        const bufferEnd = bufferStart + ENTITIES_PER_INSTANCE;
+        
+        for(let i=bufferStart; i<bufferEnd; i++) {
+            if(unpackState(stateBuffer[i]) === STATE_PROBABILITY_CLOUD) {
+                const pt = shape[materialized];
+                stateBuffer[i] = packEntity(type, spawnX + pt.x, spawnY + pt.y, STATE_ACTIVE);
+                materialized++;
+                if(materialized === 4) break;
+            }
+        }
+
+        if (isAutoPilot && isRunnings[idx]) {
+            computeAI(idx);
+        }
+    }
+
+    function shiftActive(idx, dx, dy) {
+        let canMove = true;
+        const gridOffset = idx * (GRID_W * GRID_H);
+        const bufferStart = idx * ENTITIES_PER_INSTANCE;
+        const bufferEnd = bufferStart + ENTITIES_PER_INSTANCE;
+
+        for(let i=bufferStart; i<bufferEnd; i++) {
+            const ent = stateBuffer[i];
+            if(unpackState(ent) === STATE_ACTIVE) {
+                const nx = unpackX(ent) + dx;
+                const ny = unpackY(ent) + dy;
+                if(nx < 0 || nx >= GRID_W || ny >= GRID_H) { canMove = false; break; }
+                if(ny >= 0 && mortonHashGrid[gridOffset + ny * GRID_W + nx] === 1) { canMove = false; break; }
+            }
+        }
+
+        if(canMove) {
+            for(let i=bufferStart; i<bufferEnd; i++) {
+                let ent = stateBuffer[i];
+                if(unpackState(ent) === STATE_ACTIVE) {
+                    ent = setX(ent, unpackX(ent) + dx);
+                    ent = setY(ent, unpackY(ent) + dy);
+                    stateBuffer[i] = ent;
+                }
+            }
+        }
+        return canMove;
+    }
+
+    function rotateActive(idx) {
+        const gridOffset = idx * (GRID_W * GRID_H);
+        const bufferStart = idx * ENTITIES_PER_INSTANCE;
+        const bufferEnd = bufferStart + ENTITIES_PER_INSTANCE;
+        const actives = [];
+        let type = 0;
+        
+        for(let i=bufferStart; i<bufferEnd; i++) {
+            if(unpackState(stateBuffer[i]) === STATE_ACTIVE) {
+                actives.push({index: i, x: unpackX(stateBuffer[i]), y: unpackY(stateBuffer[i])});
+                if(actives.length === 1) type = unpackType(stateBuffer[i]);
+            }
+        }
+        
+        if(actives.length === 0 || type === 4) return;
+
+        const px = actives[0].x;
+        const py = actives[0].y;
+        const testOffsets = [
+            {dx:0, dy:0}, {dx:-1, dy:0}, {dx:1, dy:0}, 
+            {dx:-2, dy:0}, {dx:2, dy:0}, {dx:0, dy:-1}
+        ];
+        
+        for(let offset of testOffsets) {
+            let canRotate = true;
+            const newCoords = [];
+            
+            for(let i=0; i<actives.length; i++) {
+                const dx = actives[i].x - px;
+                const dy = actives[i].y - py;
+                const nx = px - dy + offset.dx;
+                const ny = py + dx + offset.dy;
+                
+                if(nx < 0 || nx >= GRID_W || ny >= GRID_H) { canRotate = false; break; }
+                if(ny >= 0 && mortonHashGrid[gridOffset + ny * GRID_W + nx] === 1) { canRotate = false; break; }
+                
+                newCoords.push({nx, ny});
+            }
+
+            if(canRotate) {
+                for(let i=0; i<actives.length; i++) {
+                    stateBuffer[actives[i].index] = setX(stateBuffer[actives[i].index], newCoords[i].nx);
+                    stateBuffer[actives[i].index] = setY(stateBuffer[actives[i].index], newCoords[i].ny);
+                }
+                break;
+            }
+        }
+    }
+
+    function terrainizeEntities(idx) {
+        const bufferStart = idx * ENTITIES_PER_INSTANCE;
+        const bufferEnd = bufferStart + ENTITIES_PER_INSTANCE;
+        for(let i=bufferStart; i<bufferEnd; i++) {
+            if(unpackState(stateBuffer[i]) === STATE_ACTIVE) {
+                stateBuffer[i] = setState(stateBuffer[i], STATE_ZEROLOCK);
+            }
+        }
+        normalizeEntropy(idx);
+        if(isRunnings[idx]) materializeEntity(idx);
+    }
+
+    function normalizeEntropy(idx) {
+        buildSpatialHash(idx); 
+        const gridOffset = idx * (GRID_W * GRID_H);
+        const bufferStart = idx * ENTITIES_PER_INSTANCE;
+        const bufferEnd = bufferStart + ENTITIES_PER_INSTANCE;
+        let linesCleared = 0;
+        
+        for(let y = GRID_H - 1; y >= 0; y--) {
+            let blockCount = 0;
+            for(let x = 0; x < GRID_W; x++) {
+                if(mortonHashGrid[gridOffset + y * GRID_W + x] === 1) blockCount++;
+            }
+            
+            if(blockCount === GRID_W) {
+                linesCleared++;
+                for(let i=bufferStart; i<bufferEnd; i++) {
+                    const ent = stateBuffer[i];
+                    if(unpackState(ent) === STATE_ZEROLOCK) {
+                        const ey = unpackY(ent);
+                        if(ey === y) {
+                            stateBuffer[i] = setState(ent, STATE_PROBABILITY_CLOUD); 
+                        } else if (ey < y) {
+                            stateBuffer[i] = setY(ent, ey + 1);
+                        }
+                    }
+                }
+                buildSpatialHash(idx); 
+                y++; 
+            }
+        }
+
+        if (linesCleared > 0) {
+            const gain = linesCleared * 100 * Math.pow(2, linesCleared - 1);
+            scores[idx] += gain;
+            totalScore += gain;
+        }
+    }
+
+    function executeHardDrop(idx) {
+        let dropped = 0;
+        while(shiftActive(idx, 0, 1)) { dropped++; }
+        if (dropped > 0) {
+            scores[idx] += dropped * 2;
+            totalScore += dropped * 2;
+        }
+        terrainizeEntities(idx);
+    }
+
+    // --- 6.5. Autonomous AI (Heuristics Evaluation) ---
+    function computeAI(idx) {
+        const gridOffset = idx * (GRID_W * GRID_H);
+        const baseGrid = new Uint8Array(GRID_W * GRID_H);
+        for(let i=0; i<GRID_W * GRID_H; i++) baseGrid[i] = mortonHashGrid[gridOffset + i];
+
+        const bufferStart = idx * ENTITIES_PER_INSTANCE;
+        const bufferEnd = bufferStart + ENTITIES_PER_INSTANCE;
+        const initialCoords = [];
+        let px = 0, py = 0;
+        let type = 0;
+        
+        for(let i=bufferStart; i<bufferEnd; i++) {
+            if(unpackState(stateBuffer[i]) === STATE_ACTIVE) {
+                const x = unpackX(stateBuffer[i]);
+                const y = unpackY(stateBuffer[i]);
+                initialCoords.push({x, y});
+                if(initialCoords.length === 1) {
+                    type = unpackType(stateBuffer[i]);
+                    px = x; py = y;
+                }
+            }
+        }
+        if (initialCoords.length === 0) return;
+
+        let bestScore = -Infinity;
+        let bestRot = 0;
+        let bestXOffset = 0;
+        
+        const numRot = (type === 4) ? 1 : 4; 
+        
+        for(let r=0; r<numRot; r++) {
+            let coords = initialCoords.map(c => ({x: c.x, y: c.y}));
+            for(let i=0; i<r; i++) {
+                coords = coords.map(c => {
+                    const dx = c.x - px;
+                    const dy = c.y - py;
+                    return { x: px - dy, y: py + dx };
+                });
+            }
+            
+            for(let dx=-5; dx<=5; dx++) {
+                let valid = true;
+                let shiftedCoords = [];
+                for(let c of coords) {
+                    const nx = c.x + dx;
+                    if(nx < 0 || nx >= GRID_W) { valid = false; break; }
+                    shiftedCoords.push({x: nx, y: c.y});
+                }
+                if(!valid) continue;
+                
+                for(let c of shiftedCoords) {
+                    if(c.y >= 0 && c.y < GRID_H && baseGrid[c.y * GRID_W + c.x] === 1) { valid = false; break; }
+                }
+                if(!valid) continue;
+
+                let dropY = 0;
+                while(true) {
+                    let canDrop = true;
+                    for(let c of shiftedCoords) {
+                        const ny = c.y + dropY + 1;
+                        if(ny >= GRID_H || (ny >= 0 && baseGrid[ny * GRID_W + c.x] === 1)) {
+                            canDrop = false; break;
+                        }
+                    }
+                    if(!canDrop) break;
+                    dropY++;
+                }
+
+                const tempGrid = new Uint8Array(baseGrid);
+                for(let c of shiftedCoords) {
+                    const ny = c.y + dropY;
+                    if(ny >= 0 && ny < GRID_H) tempGrid[ny * GRID_W + c.x] = 1;
+                }
+
+                let aggHeight = 0, compLines = 0, holes = 0, bump = 0;
+                let heights = new Array(GRID_W).fill(0);
+                
+                for(let x=0; x<GRID_W; x++) {
+                    for(let y=0; y<GRID_H; y++) {
+                        if(tempGrid[y * GRID_W + x] === 1) { heights[x] = GRID_H - y; break; }
+                    }
+                    aggHeight += heights[x];
+                    if(x>0) bump += Math.abs(heights[x] - heights[x-1]);
+                }
+                
+                for(let x=0; x<GRID_W; x++) {
+                    let blockFound = false;
+                    for(let y=0; y<GRID_H; y++) {
+                        if(tempGrid[y * GRID_W + x] === 1) blockFound = true;
+                        else if(blockFound && tempGrid[y * GRID_W + x] === 0) holes++;
+                    }
+                }
+                
+                for(let y=0; y<GRID_H; y++) {
+                    let isFull = true;
+                    for(let x=0; x<GRID_W; x++) {
+                        if(tempGrid[y * GRID_W + x] === 0) { isFull = false; break; }
+                    }
+                    if(isFull) compLines++;
+                }
+
+                const score = (-0.510066 * aggHeight) + (0.760666 * compLines) + (-0.35663 * holes) + (-0.184483 * bump);
+                
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestRot = r;
+                    bestXOffset = dx;
+                }
+            }
+        }
+
+        aiQueues[idx] = [];
+        for(let i=0; i<bestRot; i++) aiQueues[idx].push("ArrowUp");
+        if(bestXOffset < 0) {
+            for(let i=0; i<Math.abs(bestXOffset); i++) aiQueues[idx].push("ArrowLeft");
+        } else {
+            for(let i=0; i<bestXOffset; i++) aiQueues[idx].push("ArrowRight");
+        }
+        aiQueues[idx].push(" "); 
+    }
+
+    // --- 7. View Layer (Rendering Adapter) ---
+    const canvas = document.getElementById('viewLayer');
+    const ctx = canvas.getContext('2d', { alpha: false }); 
+
+    const COLS = 10;
+    let ROWS = Math.ceil(activeInstances / COLS);
+    const CELL_SIZE = 4; // 超極小ピクセルサイズ
+    const MARGIN_X = 4;
+    const MARGIN_Y = 4;
+    const BOARD_W = GRID_W * CELL_SIZE;
+    const BOARD_H = GRID_H * CELL_SIZE;
+
+    // 動的キャンバスリサイズ
+    function resizeCanvas() {
+        ROWS = Math.ceil(activeInstances / COLS);
+        // Ensure at least 1 row is drawn to prevent canvas collapse
+        const drawRows = Math.max(1, ROWS);
+        canvas.width = COLS * (BOARD_W + MARGIN_X) + MARGIN_X;
+        canvas.height = drawRows * (BOARD_H + MARGIN_Y) + MARGIN_Y;
+    }
+    resizeCanvas();
+
+    function renderViewLayer() {
+        ctx.fillStyle = '#050a05';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        for(let idx=0; idx<activeInstances; idx++) {
+            const col = idx % COLS;
+            const row = Math.floor(idx / COLS);
+            const offsetX = MARGIN_X + col * (BOARD_W + MARGIN_X);
+            const offsetY = MARGIN_Y + row * (BOARD_H + MARGIN_Y);
+            
+            ctx.strokeStyle = isRunnings[idx] ? '#113311' : '#330000';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(offsetX - 1, offsetY - 1, BOARD_W + 2, BOARD_H + 2);
+
+            const bufferStart = idx * ENTITIES_PER_INSTANCE;
+            const bufferEnd = bufferStart + ENTITIES_PER_INSTANCE;
+
+            for(let i=bufferStart; i<bufferEnd; i++) {
+                const ent = stateBuffer[i];
+                const state = unpackState(ent);
+                
+                if(state !== STATE_PROBABILITY_CLOUD) {
+                    const x = unpackX(ent);
+                    const y = unpackY(ent);
+                    const type = unpackType(ent);
+                    
+                    if(y < 0) continue;
+
+                    ctx.fillStyle = COLORS[type];
+                    
+                    if (state === STATE_ACTIVE) {
+                        ctx.fillRect(offsetX + x*CELL_SIZE, offsetY + y*CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                    } else if (state === STATE_ZEROLOCK) {
+                        ctx.globalAlpha = isRunnings[idx] ? 0.6 : 0.2;
+                        ctx.fillRect(offsetX + x*CELL_SIZE, offsetY + y*CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                        ctx.globalAlpha = 1.0;
+                    }
+                }
+            }
+        }
+    }
+
+    function updateDiagnostics() {
+        let active = 0; let locked = 0; let alive = 0;
+        for(let i=0; i<activeInstances; i++) if(isRunnings[i]) alive++;
+        
+        // 効率化のため現在の論理稼働数分のみメモリ走査
+        for(let i=0; i<activeInstances * ENTITIES_PER_INSTANCE; i++) {
+            const s = unpackState(stateBuffer[i]);
+            if(s === STATE_ACTIVE) active++;
+            else if(s === STATE_ZEROLOCK) locked++;
+        }
+        document.getElementById('stat-alive').innerText = `${alive} / ${activeInstances}`;
+        document.getElementById('stat-alloc').innerText = `${active} / ${locked}`;
+        document.getElementById('stat-dilation').innerText = `${timeDilation.toFixed(2)}x`;
+        document.getElementById('stat-score').innerText = totalScore;
+        // Dynamically show the current size of the reallocatable memory pool
+        document.getElementById('stat-pool').innerText = `${(currentCapacity * ENTITIES_PER_INSTANCE).toLocaleString()} Entities`;
+    }
+
+    // --- Dynamic Instance Expansion / Reduction ---
+    function addRow() {
+        const addCount = 10;
+        // 動的再アロケーションのトリガー
+        if (activeInstances + addCount > currentCapacity) {
+            // キャパシティを現在の2倍、または必要数に拡張
+            expandMemoryPool(Math.max(currentCapacity * 2, activeInstances + addCount));
+        }
+        
+        const startIndex = activeInstances;
+        activeInstances += addCount;
+        
+        resizeCanvas();
+
+        for(let i=startIndex; i<activeInstances; i++) {
+            isRunnings[i] = 1;
+            scores[i] = 0;
+            aiQueues[i] = [];
+            materializeEntity(i);
+        }
+
+        if(!globalIsRunning) {
+            globalIsRunning = true;
+            requestAnimationFrame(dynamicsLoop);
+        }
+
+        logSystem(`TOPOLOGY EXPANDED: +${addCount} INSTANCES. TOTAL: ${activeInstances}`);
+        updateDiagnostics();
+        renderViewLayer();
+    }
+
+    function removeRow() {
+        const removeCount = 10;
+        if (activeInstances <= removeCount) {
+            logSystem("CANNOT REDUCE MORE TOPOLOGIES. MINIMUM REACHED.");
+            return;
+        }
+        
+        // メモリプールは縮小せず（ゼロアロケーション維持）、論理稼働数だけを減らす
+        activeInstances -= removeCount;
+        
+        resizeCanvas();
+        
+        logSystem(`TOPOLOGY REDUCED: -${removeCount} INSTANCES. TOTAL: ${activeInstances}`);
+        updateDiagnostics();
+        renderViewLayer();
+    }
+
+    // --- System Reset Function ---
+    function resetSystem() {
+        logSystem("INITIATING MULTIVERSE RESET SEQUENCE...");
+        
+        stateBuffer.fill(0);
+        mortonHashGrid.fill(0);
+        
+        for(let i=0; i<activeInstances; i++) {
+            isRunnings[i] = 1;
+            scores[i] = 0;
+            aiQueues[i] = [];
+        }
+        
+        totalScore = 0;
+        actionBuffer.length = 0;
+        dropTimer = 0;
+        
+        for(let i=0; i<activeInstances; i++) {
+            materializeEntity(i);
+        }
+        
+        if (!globalIsRunning) {
+            globalIsRunning = true;
+            requestAnimationFrame(dynamicsLoop);
+        }
+        
+        logSystem("RESET COMPLETE. TOPOLOGIES RE-INITIALIZED.");
+        updateDiagnostics();
+        renderViewLayer();
+    }
+
+    // --- 8. Input & Main Loop ---
+    function queueInput(action) {
+        if(globalIsRunning && !isAutoPilot) actionBuffer.push(action);
+    }
+
+    function toggleAutoPilot() {
+        isAutoPilot = !isAutoPilot;
+        logSystem(`AUTO-PILOT ${isAutoPilot ? 'ENGAGED' : 'DISENGAGED'}.`);
+        const btn = document.getElementById('btn-ai');
+        btn.innerText = `AUTO-PILOT ${isAutoPilot ? 'ON' : 'OFF'}`;
+        btn.style.backgroundColor = isAutoPilot ? 'var(--text-dim)' : '#0a220a';
+        btn.style.color = isAutoPilot ? '#000' : 'var(--accent)';
+        
+        if (isAutoPilot) {
+            for(let i=0; i<activeInstances; i++) {
+                if(isRunnings[i]) computeAI(i);
+            }
+        }
+    }
+
+    window.addEventListener('click', () => window.focus());
+    window.focus();
+
+    window.addEventListener('keydown', (e) => {
+        if(e.key.toLowerCase() === 'a') {
+            toggleAutoPilot();
+            return;
+        }
+        if(e.key.toLowerCase() === 'r') {
+            resetSystem();
+            return;
+        }
+        if(e.key === '+' || e.key === '=') {
+            addRow();
+            return;
+        }
+        if(e.key === '-' || e.key === '_') {
+            removeRow();
+            return;
+        }
+
+        const keyMap = {
+            "ArrowLeft": "ArrowLeft", "a": "ArrowLeft", "A": "ArrowLeft",
+            "ArrowRight": "ArrowRight", "d": "ArrowRight", "D": "ArrowRight",
+            "ArrowUp": "ArrowUp", "w": "ArrowUp", "W": "ArrowUp",
+            "ArrowDown": "ArrowDown", "s": "ArrowDown", "S": "ArrowDown",
+            " ": " "
+        };
+
+        if(keyMap[e.key]) {
+            e.preventDefault();
+            queueInput(keyMap[e.key]);
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if(e.key === "ArrowDown" || e.key.toLowerCase() === "s") {
+            timeDilation = 1.0;
+        }
+    });
+
+    document.getElementById('btn-left').addEventListener('click', () => queueInput('ArrowLeft'));
+    document.getElementById('btn-right').addEventListener('click', () => queueInput('ArrowRight'));
+    document.getElementById('btn-rot').addEventListener('click', () => queueInput('ArrowUp'));
+    document.getElementById('btn-drop').addEventListener('click', () => queueInput(' '));
+    document.getElementById('btn-ai').addEventListener('click', toggleAutoPilot);
+    document.getElementById('btn-reset').addEventListener('click', resetSystem);
+    document.getElementById('btn-add').addEventListener('click', addRow);
+    document.getElementById('btn-sub').addEventListener('click', removeRow);
+    
+    const btnDown = document.getElementById('btn-down');
+    btnDown.addEventListener('touchstart', (e) => { e.preventDefault(); queueInput('ArrowDown'); });
+    btnDown.addEventListener('touchend', (e) => { e.preventDefault(); timeDilation = 1.0; });
+    btnDown.addEventListener('mousedown', () => queueInput('ArrowDown'));
+    btnDown.addEventListener('mouseup', () => timeDilation = 1.0);
+
+    function dynamicsLoop(timestamp) {
+        let anyRunning = false;
+        for(let i=0; i<activeInstances; i++) if(isRunnings[i]) anyRunning = true;
+        
+        if(!anyRunning && globalIsRunning) {
+            logSystem("SYSTEM HALTED. All Topologies Collapsed.");
+            globalIsRunning = false;
+        }
+        if(!globalIsRunning) return;
+        
+        if (isAutoPilot) {
+            for(let idx=0; idx<activeInstances; idx++) {
+                if(!isRunnings[idx]) continue;
+                
+                if(aiQueues[idx].length > 0) {
+                    const act = aiQueues[idx].shift();
+                    if(act === "ArrowLeft") shiftActive(idx, -1, 0);
+                    if(act === "ArrowRight") shiftActive(idx, 1, 0);
+                    if(act === "ArrowUp") rotateActive(idx);
+                    if(act === " ") executeHardDrop(idx);
+                } else {
+                    executeHardDrop(idx); 
+                }
+            }
+            actionBuffer.length = 0; 
+        } else {
+            while(actionBuffer.length > 0) {
+                const act = actionBuffer.shift();
+                if(act === "ArrowDown") timeDilation = 15.0; 
+                
+                for(let idx=0; idx<activeInstances; idx++) {
+                    if(!isRunnings[idx]) continue;
+                    if(act === "ArrowLeft") shiftActive(idx, -1, 0);
+                    if(act === "ArrowRight") shiftActive(idx, 1, 0);
+                    if(act === "ArrowUp") rotateActive(idx);
+                    if(act === " ") executeHardDrop(idx);
+                }
+            }
+
+            dropTimer += 1 * timeDilation;
+            if(dropTimer >= baseDropInterval) {
+                dropTimer = 0;
+                for(let idx=0; idx<activeInstances; idx++) {
+                    if(!isRunnings[idx]) continue;
+                    if(!shiftActive(idx, 0, 1)) {
+                        terrainizeEntities(idx);
+                    }
+                }
+            }
+        }
+        
+        for(let idx=0; idx<activeInstances; idx++) {
+            if(isRunnings[idx]) buildSpatialHash(idx);
+        }
+        updateDiagnostics();
+        renderViewLayer();
+        
+        requestAnimationFrame(dynamicsLoop);
+    }
+
+    // --- Boot Sequence ---
+    setTimeout(() => logSystem("Booting INFINITY TETRIS Core v1.0.0..."), 200);
+    setTimeout(() => logSystem(`Allocating Zero-Pool (${ENTITIES_PER_INSTANCE * currentCapacity} ents)...`), 800);
+    setTimeout(() => logSystem("Infinite Virtual Memory bounds unlocked."), 1400);
+    setTimeout(() => {
+        logSystem("System Ready. Spawning initial 100 topologies.");
+        stateBuffer.fill(0); 
+        for(let i=0; i<activeInstances; i++) {
+            isRunnings[i] = 1;
+            materializeEntity(i);
+        }
+        globalIsRunning = true;
+        requestAnimationFrame(dynamicsLoop);
+    }, 2200);
+
+    renderViewLayer();
+
+</script>
+</body>
+</html>
