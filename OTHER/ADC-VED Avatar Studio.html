@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADC-VED Avatar Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: #050505;
+            color: #e0e0e0;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        /* サイバーパンク風のカスタムスクロールバー */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #111; }
+        ::-webkit-scrollbar-thumb { background: #00ffcc; }
+        .glitch-text { text-shadow: 0 0 5px rgba(0, 255, 204, 0.5); }
+    </style>
+</head>
+<body class="flex flex-col md:flex-row h-screen">
+
+    <!-- コントロールパネル (PDE インターフェース) -->
+    <div class="w-full md:w-1/3 h-1/2 md:h-full bg-gray-950 border-r border-teal-900 p-4 md:p-6 flex flex-col gap-6 overflow-y-auto z-10 relative">
+        <div class="border-b border-teal-800 pb-4">
+            <h1 class="text-xl md:text-2xl font-bold text-teal-400 glitch-text tracking-wider">ADC-VED STUDIO</h1>
+            <p class="text-xs text-gray-500 mt-1">Axiom Dynamics Core - Deterministic Entity</p>
+        </div>
+
+        <!-- System Status -->
+        <div class="bg-gray-900 rounded p-4 border border-gray-800">
+            <div class="flex justify-between items-center mb-2">
+                <span class="text-xs text-teal-600 uppercase">Absolute Tick</span>
+                <span id="ui-tick" class="text-sm font-bold text-teal-300">00000000</span>
+            </div>
+            <div class="flex justify-between items-center">
+                <span class="text-xs text-teal-600 uppercase">Quantization Gateway</span>
+                <span class="text-xs text-green-500 font-bold px-2 py-0.5 bg-green-900/30 rounded">ACTIVE (Q2.14)</span>
+            </div>
+        </div>
+
+        <!-- PDE Inputs -->
+        <div class="flex flex-col gap-4 flex-grow">
+            <h2 class="text-sm text-teal-500 border-l-2 border-teal-500 pl-2 uppercase tracking-wide">PDE Emotion Tensor</h2>
+            <p class="text-[10px] text-gray-500 leading-tight mb-2">アナログ入力は量子化ゲートウェイにて[0, 1024]の整数空間へ強制スナップされます。</p>
+            
+            <div class="space-y-1">
+                <div class="flex justify-between text-xs">
+                    <span>Tension (緊張/呼吸数)</span>
+                    <span id="val-tension" class="text-teal-400">512</span>
+                </div>
+                <input type="range" id="slider-tension" min="0" max="1" step="0.01" value="0.5" class="w-full accent-teal-500">
+            </div>
+
+            <div class="space-y-1">
+                <div class="flex justify-between text-xs">
+                    <span>Joy (喜び/姿勢・揺れ)</span>
+                    <span id="val-joy" class="text-teal-400">512</span>
+                </div>
+                <input type="range" id="slider-joy" min="0" max="1" step="0.01" value="0.5" class="w-full accent-teal-500">
+            </div>
+
+            <div class="space-y-1">
+                <div class="flex justify-between text-xs">
+                    <span>Fatigue (疲労/眼瞼下垂)</span>
+                    <span id="val-fatigue" class="text-teal-400">0</span>
+                </div>
+                <input type="range" id="slider-fatigue" min="0" max="1" step="0.01" value="0" class="w-full accent-teal-500">
+            </div>
+        </div>
+
+        <!-- Memory Dump Simulation -->
+        <div class="mt-auto">
+            <h2 class="text-xs text-gray-500 uppercase mb-2 flex items-center justify-between">
+                <span>Causality Buffer Dump</span>
+                <span class="text-[10px] text-red-500 animate-pulse">REC</span>
+            </h2>
+            <pre id="memory-dump" class="text-[9px] md:text-[10px] text-gray-400 bg-black p-2 rounded border border-gray-800 h-32 overflow-hidden leading-tight font-mono"></pre>
+        </div>
+        
+        <!-- Instruction -->
+        <div class="absolute bottom-2 right-4 text-[10px] text-gray-600">
+            [Mouse Move] Spatial Hash Input
+        </div>
+    </div>
+
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container" class="w-full md:w-2/3 h-1/2 md:h-full relative">
+        <div class="absolute top-4 right-4 z-10 pointer-events-none">
+            <div class="w-32 h-32 border border-teal-900/50 rounded-full flex items-center justify-center relative">
+                <div class="absolute text-[8px] text-teal-800 top-1">FBM FIELD</div>
+                <div id="fbm-indicator" class="w-2 h-2 bg-teal-500 rounded-full absolute transition-all duration-75"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ADC-VED 決定論的シミュレーション・コア
+         * 浮動小数点を排除し、固定小数点(1024を1.0とする)と整数のTickのみで計算を行う
+         */
+        
+        // --- 1. システム状態定義 ---
+        let absoluteTick = 0n; // 絶対Tick (因果律の基準)
+
+        // 量子化されたエンティティ状態 [0, 1024]
+        const state = {
+            tension: 512,
+            joy: 512,
+            fatigue: 0,
+            targetHeadX: 0, // マウス入力(量子化済) [-512, 512]
+            targetHeadY: 0,
+            currentHeadX: 0,
+            currentHeadY: 0
+        };
+
+        // 決定論的サイン波LUT (0~1023 -> 0~255のインデックス -> 固定小数点出力)
+        // 実行時に一度だけ生成。以降 Math.sin() は使用禁止。
+        const sinLUT = new Int32Array(256);
+        for(let i=0; i<256; i++) {
+            sinLUT[i] = Math.round(Math.sin((i / 256) * Math.PI * 2) * 1024);
+        }
+
+        /**
+         * 決定論的周期関数
+         * @param {number} tick - 現在のTick
+         * @param {number} periodTick - 1周期にかかるTick数
+         * @returns {number} -1024 ~ 1024 の整数
+         */
+        function getDeterministicWave(tick, periodTick) {
+            const idx = Math.floor((tick % periodTick) * 256 / periodTick);
+            return sinLUT[idx];
+        }
+
+        // --- 2. Three.js セットアップ ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.05);
+
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 100);
+        camera.position.set(0, 1.2, 3);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // 照明
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0x00ffcc, 1.5);
+        dirLight.position.set(2, 5, 3);
+        scene.add(dirLight);
+
+        const fillLight = new THREE.DirectionalLight(0xff0055, 0.5);
+        fillLight.position.set(-2, 1, 3);
+        scene.add(fillLight);
+
+        // --- 3. アバターモデルの構築 (ADC Entity) ---
+        const avatarGroup = new THREE.Group();
+        scene.add(avatarGroup);
+
+        // マテリアル定義 (サイバー・ソリッドスタイル)
+        const matBody = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2, metalness: 0.8 });
+        const matSkin = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.4 });
+        const matAccent = new THREE.MeshStandardMaterial({ color: 0x00ffcc, emissive: 0x004433 });
+        const matEye = new THREE.MeshStandardMaterial({ color: 0x00ffcc, emissive: 0x00ffcc, emissiveIntensity: 2 });
+
+        // 体 (胴体)
+        const bodyGeo = new THREE.BoxGeometry(0.5, 0.7, 0.3);
+        const body = new THREE.Mesh(bodyGeo, matBody);
+        body.position.y = 0.35;
+        avatarGroup.add(body);
+
+        // 首
+        const neckGeo = new THREE.CylinderGeometry(0.08, 0.1, 0.2);
+        const neck = new THREE.Mesh(neckGeo, matSkin);
+        neck.position.y = 0.75;
+        avatarGroup.add(neck);
+
+        // 頭部グループ (FK動態の起点)
+        const headGroup = new THREE.Group();
+        headGroup.position.y = 0.85; // 首の上が原点
+        avatarGroup.add(headGroup);
+
+        // 頭 (顔)
+        const headGeo = new THREE.BoxGeometry(0.45, 0.45, 0.45);
+        const head = new THREE.Mesh(headGeo, matSkin);
+        head.position.y = 0.225;
+        headGroup.add(head);
+
+        // 目
+        const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.05), matEye);
+        eyeL.position.set(-0.12, 0.25, 0.23);
+        headGroup.add(eyeL);
+
+        const eyeR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.05), matEye);
+        eyeR.position.set(0.12, 0.25, 0.23);
+        headGroup.add(eyeR);
+
+        // 髪の毛グループ (FBM影響ノード)
+        const hairMeshes = [];
+        const hairMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 });
+        for(let i=0; i<5; i++) {
+            // ピボットを作成して回転の基点にする
+            const pivot = new THREE.Group();
+            const posX = -0.2 + i * 0.1;
+            pivot.position.set(posX, 0.45, 0.1);
+            
+            const hairGeo = new THREE.BoxGeometry(0.08, 0.4, 0.05);
+            // ジオメトリを下にずらしてピボットを上端にする
+            hairGeo.translate(0, -0.2, 0); 
+            const hair = new THREE.Mesh(hairGeo, matAccent);
+            
+            pivot.add(hair);
+            headGroup.add(pivot);
+            hairMeshes.push({ pivot, idx: i });
+        }
+
+        // 背景グリッド (空間ハッシュの可視化)
+        const gridHelper = new THREE.GridHelper(10, 20, 0x00ffcc, 0x222222);
+        gridHelper.position.y = -0.01;
+        scene.add(gridHelper);
+
+        // --- 4. UI / 入力イベント (量子化ゲートウェイ) ---
+        function setupSlider(id, stateKey) {
+            const slider = document.getElementById(`slider-${id}`);
+            const valDisplay = document.getElementById(`val-${id}`);
+            slider.addEventListener('input', (e) => {
+                // アナログ浮動小数点を [0, 1024] の整数に強制スナップ
+                const quantized = Math.floor(parseFloat(e.target.value) * 1024);
+                state[stateKey] = quantized;
+                valDisplay.textContent = quantized;
+            });
+        }
+        setupSlider('tension', 'tension');
+        setupSlider('joy', 'joy');
+        setupSlider('fatigue', 'fatigue');
+
+        // 空間干渉 (マウス追従)
+        container.addEventListener('mousemove', (e) => {
+            const rect = container.getBoundingClientRect();
+            // -1.0 ~ 1.0 の浮動小数点
+            const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            
+            // [-512, 512] の整数に量子化
+            state.targetHeadY = Math.floor(nx * -512); 
+            state.targetHeadX = Math.floor(ny * 512);
+        });
+        
+        // タッチ操作対応
+        container.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = container.getBoundingClientRect();
+            const touch = e.touches[0];
+            const nx = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+            const ny = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
+            state.targetHeadY = Math.floor(nx * -512); 
+            state.targetHeadX = Math.floor(ny * 512);
+        }, { passive: false });
+
+        // リサイズ対応
+        window.addEventListener('resize', () => {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+
+        // --- 5. メイン・シミュレーション・ループ ---
+        const uiTick = document.getElementById('ui-tick');
+        const memoryDump = document.getElementById('memory-dump');
+        const fbmIndicator = document.getElementById('fbm-indicator');
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 絶対Tick進行
+            absoluteTick++;
+            const tickInt = Number(absoluteTick); // JavaScript空間での演算用
+
+            // --- A. 動態計算 (すべて整数空間) ---
+            
+            // 1. 決定論的1€フィルタ (ローパス) - 頭部の追従
+            // 1/8の減衰係数を用いた整数フィルタリング
+            state.currentHeadX += Math.floor((state.targetHeadX - state.currentHeadX) / 8);
+            state.currentHeadY += Math.floor((state.targetHeadY - state.currentHeadY) / 8);
+
+            // 2. 呼吸位相 (CVD Phase)
+            // Tension(0-1024) が高いほど周期が短くなる (base 150 - max 90)
+            const breathPeriod = 150 - Math.floor((state.tension * 60) / 1024);
+            const breathPhase = getDeterministicWave(tickInt, breathPeriod); // [-1024, 1024]
+
+            // 3. 瞬き位相
+            // Fatigue(0-1024) で瞼が下がり、Tensionで頻度変化
+            const blinkPeriod = 200 - Math.floor((state.tension * 80) / 1024);
+            const isBlinking = (tickInt % blinkPeriod) < 8; // 8Tickの間閉じる
+
+            // 4. FBM (外周場) 髪の揺れ
+            // Joy(0-1024) が高いほど揺れの振幅が増加
+            const fbmPeriod = 80;
+            const globalWindPhase = getDeterministicWave(tickInt, fbmPeriod);
+
+            // --- B. 描画コンテキストへの適用 (ここで初めて Unquantize[ /1024 ] する) ---
+
+            // 頭の回転 (マウス追従 + Joyによる上向き/Fatigueによる俯き)
+            const poseBaseX = -(state.joy / 1024) * 0.2 + (state.fatigue / 1024) * 0.3;
+            headGroup.rotation.x = poseBaseX + (state.currentHeadX / 1024) * 0.5;
+            headGroup.rotation.y = (state.currentHeadY / 1024) * 0.8;
+
+            // 呼吸による胸の上下とスケール
+            const breathFloat = breathPhase / 1024; // -1.0 to 1.0
+            body.scale.y = 1.0 + breathFloat * 0.03;
+            headGroup.position.y = 0.85 + breathFloat * 0.01;
+
+            // 目の開閉
+            const eyelidDroop = (state.fatigue / 1024) * 0.6; // 最大60%閉じる
+            if (isBlinking) {
+                eyeL.scale.y = 0.1;
+                eyeR.scale.y = 0.1;
+            } else {
+                eyeL.scale.y = 1.0 - eyelidDroop;
+                eyeR.scale.y = 1.0 - eyelidDroop;
+            }
+
+            // 髪の揺れ適用
+            const amplitude = 0.1 + (state.joy / 1024) * 0.2;
+            hairMeshes.forEach(h => {
+                // 各房ごとに位相をずらす
+                const localWind = getDeterministicWave(tickInt + h.idx * 12, fbmPeriod) / 1024;
+                h.pivot.rotation.x = localWind * amplitude + 0.1;
+                h.pivot.rotation.z = getDeterministicWave(tickInt + h.idx * 5, 110) / 1024 * (amplitude * 0.5);
+            });
+
+            // --- C. UI デバッグ表示の更新 ---
+            
+            // FBMインジケーターの動き
+            fbmIndicator.style.transform = `translate(${(globalWindPhase/1024)*30}px, ${(getDeterministicWave(tickInt+20, 90)/1024)*30}px)`;
+
+            // 10フレームに1回UIを更新 (DOM負荷軽減)
+            if (tickInt % 10 === 0) {
+                uiTick.textContent = tickInt.toString().padStart(8, '0');
+                
+                // サイバー風メモリダンプ生成
+                let dumpStr = '';
+                const hx = (val) => Math.abs(val).toString(16).padStart(4, '0').toUpperCase();
+                
+                dumpStr += `[SLOT 00] ID/CVM: ${hx(tickInt & 0xFFFF)} ${hx(state.tension)} 0001\n`;
+                dumpStr += `[SLOT 01] FK_ROT: ${hx(state.currentHeadX)} ${hx(state.currentHeadY)} 0000\n`;
+                dumpStr += `[SLOT 05] FC_BLN: ${isBlinking ? '03FF' : '0000'} ${hx(state.fatigue)} ${hx(state.joy)}\n`;
+                dumpStr += `[SLOT 09] CVD_PH: ${hx(breathPhase)} ${hx(breathPeriod)} 0000\n`;
+                dumpStr += `[SLOT 10] FBM_TS: ${hx(globalWindPhase)} ${hx(amplitude*1024)} 0000\n`;
+                dumpStr += `\n>> SDF CHUNK HASH: 0x${Math.floor(Math.random()*0xFFFFFF).toString(16).toUpperCase()}`;
+                
+                memoryDump.textContent = dumpStr;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // 起動
+        animate();
+    </script>
+</body>
+</html>
