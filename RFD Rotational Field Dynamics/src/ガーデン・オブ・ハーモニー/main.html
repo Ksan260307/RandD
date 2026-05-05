@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none">
-    <title>光の庭 - 星座と共鳴</title>
+    <title>光の庭 - 星座と共鳴 (UCD-F ABC)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
@@ -51,20 +51,6 @@
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255,255,255,0.15);
         }
-        #manaBarContainer {
-            width: 100%;
-            height: 6px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 3px;
-            overflow: hidden;
-            margin-top: 8px;
-        }
-        #manaBar {
-            height: 100%;
-            width: 100%;
-            background: linear-gradient(90deg, #3b82f6, #8b5cf6, #fcd34d);
-            transition: width 0.1s ease-out;
-        }
         @keyframes pop {
             0% { transform: scale(1); }
             50% { transform: scale(1.3); }
@@ -80,7 +66,7 @@
         }
         #constellationModal.active {
             opacity: 1;
-            pointer-events: auto;
+            pointer-events: auto; /* モーダル展開時のみタッチを有効化 */
             transform: scale(1);
         }
         .constellation-card {
@@ -98,6 +84,18 @@
             border-radius: 4px;
             margin-bottom: 4px;
         }
+
+        /* 拡大表示モーダル用 */
+        #imageModal {
+            transition: opacity 0.3s ease;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 100;
+        }
+        #imageModal.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
     </style>
 </head>
 <body>
@@ -105,8 +103,7 @@
     <!-- 描画領域 -->
     <canvas id="simulationCanvas"></canvas>
 
-    <!-- 透明レイヤーを廃止し、UIを独立配置 -->
-    <!-- 上部UIパネル -->
+    <!-- UIパネル群 -->
     <div id="top-ui" class="absolute top-0 left-0 w-full p-3 md:p-6 flex justify-between items-start gap-2 pointer-events-none transition-all duration-500 ease-in-out z-10">
         <!-- 左パネル -->
         <div class="glass-panel p-3 md:p-4 rounded-xl interactive shadow-lg">
@@ -154,11 +151,6 @@
                 <p class="text-xs md:text-sm text-blue-200 font-bold tracking-wide">
                     出力調整 <span class="text-[8px] md:text-[10px] font-normal opacity-70 ml-1">※光る瞬間に当てるとPERFECT</span>
                 </p>
-                <p class="text-[10px] md:text-xs text-blue-300 font-mono font-bold">MANA: <span id="manaText" class="text-white">100</span>%</p>
-            </div>
-            
-            <div id="manaBarContainer" class="pointer-events-none">
-                <div id="manaBar"></div>
             </div>
 
             <div class="flex items-center gap-2 md:gap-4 mt-2 md:mt-4">
@@ -177,22 +169,34 @@
     </button>
 
     <!-- 星座図鑑モーダル -->
-    <div id="constellationModal" class="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 md:p-4 pointer-events-none">
+    <div id="constellationModal" class="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 md:p-4">
         <div class="glass-panel w-full max-w-4xl h-[85dvh] rounded-2xl flex flex-col interactive shadow-[0_0_50px_rgba(59,130,246,0.3)]">
-            <div class="p-4 md:p-6 border-b border-white/10 flex justify-between items-center pointer-events-none">
+            <div class="p-4 md:p-6 border-b border-white/10 flex justify-between items-center">
                 <h2 class="text-lg md:text-2xl font-bold text-blue-200 flex items-center gap-2 md:gap-3">
                     <svg class="w-5 h-5 md:w-6 md:h-6 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
                     Constellation Archive
                 </h2>
-                <button id="closeBookBtn" class="text-gray-400 hover:text-white bg-white/5 rounded-full p-1.5 md:p-2 transition-colors interactive">
+                <button id="closeBookBtn" class="text-gray-400 hover:text-white bg-white/5 rounded-full p-1.5 md:p-2 transition-colors">
                     <svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
             </div>
-            <div class="p-4 md:p-6 overflow-y-auto flex-1 interactive">
-                <div id="constellationGrid" class="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 pointer-events-none">
-                    <p class="col-span-full text-center text-gray-500 mt-10 text-sm md:text-base pointer-events-none" id="emptyArchiveText">まだ星座は発見されていません。<br>光のネットワークを繋げてみましょう。</p>
+            <div class="p-4 md:p-6 overflow-y-auto flex-1">
+                <div id="constellationGrid" class="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                    <p class="col-span-full text-center text-gray-500 mt-10 text-sm md:text-base" id="emptyArchiveText">まだ星座は発見されていません。<br>光のネットワークを繋げてみましょう。</p>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- 画像拡大表示モーダル (ライトボックス) -->
+    <div id="imageModal" class="fixed inset-0 bg-black/95 backdrop-blur-md flex items-center justify-center p-4">
+        <button id="closeImageModalBtn" class="absolute top-4 right-4 md:top-8 md:right-8 text-gray-400 hover:text-white bg-white/10 rounded-full p-2 transition-colors interactive">
+            <svg class="w-6 h-6 md:w-8 md:h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+        <div class="flex flex-col items-center max-w-5xl w-full">
+            <img id="expandedImage" src="" alt="" class="max-w-full max-h-[70vh] md:max-h-[80vh] object-contain rounded-xl border border-white/20 shadow-[0_0_50px_rgba(252,211,77,0.2)] interactive">
+            <div id="expandedImageTitle" class="text-xl md:text-3xl font-bold text-blue-200 mt-6 tracking-widest text-center"></div>
+            <div id="expandedImageStars" class="text-sm md:text-base text-gray-400 mt-2 font-mono"></div>
         </div>
     </div>
 
@@ -200,7 +204,9 @@
 /**
  * -------------------------------------------------------------
  * 内部ロジック: UCD-F & RFD Core + Spatial Hash Grid最適化
- * + 図鑑追加のクールダウンと重複防止 + 透明レイヤー完全排除
+ * + 減衰の高速化 + 図鑑UI修正(DL機能追加)
+ * + 最大構成星数の制限(50個) + 図鑑画像拡大表示(Lightbox)
+ * + カメラ(ズーム・パン)対応 + UIレイヤーからの波紋発生許可
  * -------------------------------------------------------------
  */
 
@@ -215,8 +221,6 @@ const uiElems = {
     harmony: document.getElementById('harmonyScore'),
     comboBox: document.getElementById('comboContainer'),
     comboMult: document.getElementById('comboMultiplier'),
-    manaBar: document.getElementById('manaBar'),
-    manaText: document.getElementById('manaText'),
     slider: document.getElementById('powerSlider'),
     modal: document.getElementById('constellationModal'),
     openBtn: document.getElementById('openBookBtn'),
@@ -229,11 +233,20 @@ const uiElems = {
     eyeClosed: document.getElementById('eyeIconClosed')
 };
 
+// 拡大表示モーダル用要素
+const imageModal = document.getElementById('imageModal');
+const expandedImage = document.getElementById('expandedImage');
+const expandedImageTitle = document.getElementById('expandedImageTitle');
+const expandedImageStars = document.getElementById('expandedImageStars');
+const closeImageModalBtn = document.getElementById('closeImageModalBtn');
+
 const PI = Math.PI;
 const PHI = 1.6180339887; 
 const GOLDEN_ANGLE = 2.39996323; 
-const BASE_FRICTION = 0.05; 
+const BASE_FRICTION = 0.2; 
+const HIGH_ENERGY_FRICTION_MULTIPLIER = 3.0; 
 const CLUSTER_THRESHOLD = 10; 
+const MAX_STARS_PER_CONSTELLATION = 50; 
 const LINK_DIST_SQ = 4500;
 const CELL_SIZE = 70; 
 const MAX_ARCHIVE = 20; 
@@ -249,10 +262,15 @@ const NUM_ENTITIES = Math.min(window.innerWidth > 768 ? 1200 : 800, 1500);
 let totalScore = 0;
 let currentCombo = 0;
 let comboTimer = 0;
-let mana = 100;
 let screenShake = 0;
 let constellationCooldown = 0; 
 let isUiHidden = false; 
+
+// カメラとタッチ入力の管理
+let transform = { x: 0, y: 0, scale: 1.0 };
+let transformChanged = false;
+let activePointers = new Map();
+const DRAG_THRESHOLD = 5;
 
 function resize() {
     width = canvas.width = window.innerWidth;
@@ -298,7 +316,12 @@ class Entity {
         }
         this.deathTime = 0;
 
-        this.omega *= Math.pow(PHI, -dt * BASE_FRICTION);
+        let currentFriction = BASE_FRICTION;
+        if (this.omega > 3.0) {
+            currentFriction *= HIGH_ENERGY_FRICTION_MULTIPLIER;
+        }
+
+        this.omega *= Math.pow(PHI, -dt * currentFriction);
 
         if (this.omega < 3.0) {
             this.usedInArchive = false;
@@ -314,18 +337,9 @@ class Entity {
 
         let subSteps = this.omega > 5 ? 3 : 1;
         let subDt = dt / subSteps;
-        let eventTriggeredThisFrame = false;
 
         for (let i = 0; i < subSteps; i++) {
-            let prevTheta = this.theta;
             this.theta = (this.theta + (this.omega + this.jitter) * subDt) % (2 * PI);
-            if (Math.floor(prevTheta / PI) !== Math.floor(this.theta / PI)) {
-                eventTriggeredThisFrame = true;
-            }
-        }
-
-        if (eventTriggeredThisFrame) {
-            mana = Math.min(100, mana + 0.05);
         }
 
         this.direction += Math.sin(this.theta) * dt * 0.5;
@@ -334,6 +348,7 @@ class Entity {
         this.x += Math.cos(this.direction) * currentSpeed * dt;
         this.y += Math.sin(this.direction) * currentSpeed * dt;
 
+        // ワールド境界の反射 (初期画面サイズ幅で固定)
         const margin = 10;
         if (this.x < margin) { this.x = margin; this.direction = 0; } 
         else if (this.x > width - margin) { this.x = width - margin; this.direction = PI; }
@@ -428,7 +443,6 @@ class Ripple {
                 }
             }
             if (perfectCount > 0) {
-                mana = Math.min(100, mana + perfectCount * 1.5);
                 totalScore += perfectCount * 20;
                 floatingTexts.push(new FloatingText(this.x, this.y - this.radius/2, `PERFECT!`, '#fcd34d'));
             }
@@ -474,10 +488,6 @@ class FloatingText {
     }
 }
 
-// -----------------------------------------------------------
-// Logic & Initialization
-// -----------------------------------------------------------
-
 function createParticles(x, y, count, color) { for(let i=0; i<count; i++) particles.push(new Particle(x, y, color)); }
 function triggerScoreAnim() {
     uiElems.score.innerText = totalScore;
@@ -500,6 +510,10 @@ function detectConstellationsOptimized(activeNodes, adjList) {
             while (stack.length > 0) {
                 let curr = stack.pop();
                 cluster.push(curr);
+                
+                if (cluster.length >= MAX_STARS_PER_CONSTELLATION) {
+                    break;
+                }
                 
                 let neighbors = adjList.get(curr.id);
                 if (neighbors) {
@@ -592,12 +606,24 @@ function registerConstellation(cluster, adjList) {
 
     uiElems.emptyText.style.display = 'none';
     let card = document.createElement('div');
-    card.className = 'constellation-card pop-anim';
+    card.className = 'constellation-card pop-anim relative'; 
     card.innerHTML = `
-        <img src="${dataUrl}" alt="${name}">
+        <img src="${dataUrl}" alt="${name}" class="cursor-pointer hover:opacity-80 transition-opacity interactive">
         <div class="text-xs text-blue-300 font-bold mt-2">${name}</div>
         <div class="text-[10px] text-gray-400">${cluster.length} Stars Connected</div>
+        <a href="${dataUrl}" download="${name}.png" class="absolute top-2 right-2 bg-blue-600/90 hover:bg-blue-500 text-white p-1.5 rounded-full interactive shadow-lg border border-white/20" title="ダウンロード">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+        </a>
     `;
+
+    const imgEl = card.querySelector('img');
+    imgEl.addEventListener('click', () => {
+        expandedImage.src = dataUrl;
+        expandedImageTitle.innerText = name;
+        expandedImageStars.innerText = `${cluster.length} Stars Connected`;
+        imageModal.classList.add('active');
+    });
+
     uiElems.grid.appendChild(card);
     uiElems.constellationCount.innerText = discoveredConstellations.length;
 
@@ -645,19 +671,25 @@ function loop(currentTime) {
         uiElems.comboBox.classList.add('hidden');
     }
 
-    mana = Math.min(100, mana + 1.5 * dt);
-    uiElems.manaBar.style.width = `${mana}%`;
-    uiElems.manaText.innerText = Math.floor(mana);
-    uiElems.manaBar.style.background = mana < 20 ? 'red' : 'linear-gradient(90deg, #3b82f6, #8b5cf6, #fcd34d)';
-
     if (constellationCooldown > 0) {
         constellationCooldown -= dt;
     }
 
-    ctx.fillStyle = 'rgba(2, 4, 10, 0.4)'; 
+    // カメラ移動中は残像をクリアして破綻を防ぐ
+    if (transformChanged) {
+        ctx.fillStyle = 'rgba(2, 4, 10, 1.0)'; 
+        transformChanged = false;
+    } else {
+        ctx.fillStyle = 'rgba(2, 4, 10, 0.4)'; 
+    }
     ctx.fillRect(0, 0, width, height);
 
     ctx.save();
+    
+    // カメラのトランスフォーム適用
+    ctx.translate(transform.x, transform.y);
+    ctx.scale(transform.scale, transform.scale);
+
     if(screenShake > 0) {
         ctx.translate((Math.random()-0.5)*screenShake, (Math.random()-0.5)*screenShake);
         screenShake *= 0.8;
@@ -766,6 +798,13 @@ function loop(currentTime) {
 uiElems.openBtn.addEventListener('click', () => uiElems.modal.classList.add('active'));
 uiElems.closeBtn.addEventListener('click', () => uiElems.modal.classList.remove('active'));
 
+closeImageModalBtn.addEventListener('click', () => imageModal.classList.remove('active'));
+imageModal.addEventListener('click', (e) => {
+    if (e.target === imageModal) {
+        imageModal.classList.remove('active');
+    }
+});
+
 uiElems.toggleBtn.addEventListener('click', () => {
     isUiHidden = !isUiHidden;
     if (isUiHidden) {
@@ -781,22 +820,121 @@ uiElems.toggleBtn.addEventListener('click', () => {
     }
 });
 
-// Canvasへの直接タッチでのみ波紋を発生させる
-canvas.addEventListener('pointerdown', (e) => {
-    let vel = parseInt(uiElems.slider.value);
-    let manaCost = vel * 2.5;
-    
-    if (mana >= manaCost) {
-        mana -= manaCost;
-        ripples.push(new Ripple(e.clientX, e.clientY, vel));
-        if (navigator.vibrate) navigator.vibrate(vel * 10);
-    } else {
-        if (!isUiHidden) {
-            uiElems.manaBar.parentElement.classList.add('pop-anim');
-            setTimeout(() => uiElems.manaBar.parentElement.classList.remove('pop-anim'), 400);
-        }
-        floatingTexts.push(new FloatingText(e.clientX, e.clientY, "NO MANA", "#ef4444"));
+// PC向け: マウスホイールでのズーム
+window.addEventListener('wheel', (e) => {
+    // UI上でのスクロールは弾く
+    if (e.target.closest('.interactive') || uiElems.modal.classList.contains('active') || imageModal.classList.contains('active')) {
+        return;
     }
+    e.preventDefault();
+    let zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    let newScale = transform.scale * zoomFactor;
+    newScale = Math.max(0.2, Math.min(newScale, 5.0));
+
+    let cx = e.clientX;
+    let cy = e.clientY;
+
+    transform.x = cx - (cx - transform.x) * (newScale / transform.scale);
+    transform.y = cy - (cy - transform.y) * (newScale / transform.scale);
+    transform.scale = newScale;
+    transformChanged = true;
+}, { passive: false });
+
+// マルチタッチ(ピンチズーム・パン) と タップ(波紋) の管理
+document.addEventListener('pointerdown', (e) => {
+    // モーダル（図鑑、画像拡大）展開時は波紋・パンを無効化
+    if (uiElems.modal.classList.contains('active') || imageModal.classList.contains('active')) return;
+    
+    // スライダーなどのinput要素操作時は波紋・パンを無効化
+    if (e.target.tagName && e.target.tagName.toLowerCase() === 'input') return;
+
+    // ※ e.target.closest('.interactive') による遮断を解除しました
+    // これにより、画面上のUIパネル（.interactive 要素）からドラッグを開始した場合でも
+    // パン操作ができ、パネルをタップした際にも波紋が発生します。
+
+    activePointers.set(e.pointerId, { 
+        startX: e.clientX, startY: e.clientY,
+        x: e.clientX, y: e.clientY,
+        moved: false
+    });
+});
+
+document.addEventListener('pointermove', (e) => {
+    if (!activePointers.has(e.pointerId)) return;
+
+    let p = activePointers.get(e.pointerId);
+    let dx = e.clientX - p.x;
+    let dy = e.clientY - p.y;
+    
+    // 一定ピクセル動いたらドラッグと判定し、波紋を出さない
+    if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > DRAG_THRESHOLD) {
+        p.moved = true;
+    }
+
+    if (activePointers.size === 1) {
+        // 1本指ドラッグ: 画面のパン(移動)
+        transform.x += dx;
+        transform.y += dy;
+        transformChanged = true;
+    } else if (activePointers.size === 2) {
+        // 2本指: ピンチズーム＆パン
+        let pointers = Array.from(activePointers.values());
+        let p1 = pointers[0], p2 = pointers[1];
+        
+        let d1 = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        let cx1 = (p1.x + p2.x) / 2;
+        let cy1 = (p1.y + p2.y) / 2;
+
+        p.x = e.clientX;
+        p.y = e.clientY;
+
+        let d2 = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        let cx2 = (p1.x + p2.x) / 2;
+        let cy2 = (p1.y + p2.y) / 2;
+
+        if (d1 > 0) {
+            let scaleFactor = d2 / d1;
+            let newScale = transform.scale * scaleFactor;
+            newScale = Math.max(0.2, Math.min(newScale, 5.0));
+
+            // ピンチ中心を軸にしたスケーリング
+            transform.x = cx2 - (cx2 - transform.x) * (newScale / transform.scale);
+            transform.y = cy2 - (cy2 - transform.y) * (newScale / transform.scale);
+            transform.scale = newScale;
+
+            // 2本指の重心移動分をさらにパン
+            transform.x += (cx2 - cx1);
+            transform.y += (cy2 - cy1);
+            transformChanged = true;
+        }
+        return; 
+    }
+
+    p.x = e.clientX;
+    p.y = e.clientY;
+});
+
+document.addEventListener('pointerup', (e) => {
+    if (activePointers.has(e.pointerId)) {
+        let p = activePointers.get(e.pointerId);
+        
+        // ほとんど指を動かさずに離した場合のみ波紋を発生させる（タップ判定）
+        if (!p.moved && activePointers.size === 1) {
+            let vel = parseInt(uiElems.slider.value);
+            // スクリーン座標をワールド座標（カメラのオフセットとスケールを加味）へ変換
+            let worldX = (e.clientX - transform.x) / transform.scale;
+            let worldY = (e.clientY - transform.y) / transform.scale;
+            
+            ripples.push(new Ripple(worldX, worldY, vel));
+            if (navigator.vibrate) navigator.vibrate(vel * 10);
+        }
+        
+        activePointers.delete(e.pointerId);
+    }
+});
+
+document.addEventListener('pointercancel', (e) => {
+    activePointers.delete(e.pointerId);
 });
 
 requestAnimationFrame(loop);
