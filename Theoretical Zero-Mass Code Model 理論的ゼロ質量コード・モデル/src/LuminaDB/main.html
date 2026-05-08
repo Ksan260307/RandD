@@ -1,0 +1,1784 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LuminaDB</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+      transition: box-shadow 0.3s ease;
+    }
+    /* トランザクション中の視覚エフェクト */
+    body.tx-active {
+      box-shadow: inset 0 0 0 4px #f59e0b, inset 0 0 80px rgba(245, 158, 11, 0.15);
+    }
+    
+    /* スクロールバー */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+    /* シンタックスハイライト */
+    .hl-keyword { color: #c678dd; font-weight: bold; }
+    .hl-string { color: #98c379; }
+    .hl-number { color: #d19a66; }
+
+    /* エディタの重ね合わせ */
+    #queryInput, #highlightLayer {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      padding: 1rem;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      border: 1px solid transparent;
+    }
+
+    /* パーティクルエフェクト */
+    @keyframes particle-sweep {
+      0% { transform: translateX(-100%) skewX(-30deg); opacity: 0; }
+      20% { opacity: 0.8; }
+      80% { opacity: 0.8; }
+      100% { transform: translateX(200%) skewX(-30deg); opacity: 0; }
+    }
+    .particle-fx {
+      position: absolute;
+      top: 0; left: 0; bottom: 0; width: 100px;
+      background: linear-gradient(to right, transparent, rgba(34, 211, 238, 0.4), transparent);
+      animation: particle-sweep 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      pointer-events: none;
+      z-index: 20;
+    }
+  </style>
+</head>
+<body class="h-screen w-full bg-slate-950 text-slate-200 font-sans flex flex-col md:flex-row overflow-hidden selection:bg-cyan-900 relative">
+
+  <!-- ============================================================================ -->
+  <!-- 左サイドバー -->
+  <!-- ============================================================================ -->
+  <aside class="w-full h-1/3 md:h-full md:w-64 bg-slate-900 border-b md:border-r border-slate-800 flex flex-col shadow-2xl z-10 shrink-0">
+    <!-- ヘッダー -->
+    <div class="flex items-center justify-between p-4 border-b border-slate-800 shrink-0">
+      <div class="flex items-center gap-2 text-cyan-400">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5V19A9 3 0 0 0 21 19V5"></path><path d="M3 12A9 3 0 0 0 21 12"></path></svg>
+        <h1 class="font-bold tracking-wider">LuminaDB</h1>
+      </div>
+      <div class="flex items-center gap-1">
+        <button id="openHelpBtn" class="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded transition-colors" title="Command Reference">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        </button>
+        <button id="openSettingsBtn" class="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded transition-colors" title="Engine Settings">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <!-- オブジェクトツリー -->
+      <div class="flex-1 overflow-y-auto p-4 border-b border-slate-800">
+        <div class="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2 flex items-center justify-between">
+          <div class="flex items-center gap-1">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            Databases
+          </div>
+          <!-- データベース操作ボタン -->
+          <div class="flex items-center gap-1.5 flex-wrap justify-end">
+            <!-- API Listener Toggle -->
+            <button id="toggleApiBtn" class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 hover:bg-slate-800 transition-colors" title="Toggle Local API Server">
+              <span id="apiStatusDot" class="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_4px_#ef4444]"></span>
+              <span id="apiStatusText" class="text-[10px] font-bold text-slate-400 tracking-wider">OFF</span>
+            </button>
+            <!-- API Playground Button -->
+            <button id="openApiBtn" class="text-slate-500 hover:text-pink-400 transition-colors ml-1" title="API Playground & Integration">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+            </button>
+            <!-- Data Generator Button -->
+            <button id="openGeneratorBtn" class="text-slate-500 hover:text-indigo-400 transition-colors ml-1" title="Data Generator">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+            </button>
+            <!-- Refresh Button -->
+            <button id="refreshDbBtn" class="text-slate-500 hover:text-cyan-400 transition-colors ml-1" title="Refresh Status">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
+            </button>
+            <!-- Import CSV Button (Modal Trigger) -->
+            <button id="openCsvBtn" class="text-slate-500 hover:text-amber-400 transition-colors ml-1" title="Import CSV Data">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="16" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            </button>
+            <!-- Import JSON Button -->
+            <label for="loadDbInput" class="text-slate-500 hover:text-emerald-400 transition-colors cursor-pointer ml-1" title="Import DB from JSON">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            </label>
+            <input type="file" id="loadDbInput" class="hidden" accept=".json">
+            <!-- Export JSON Button -->
+            <button id="saveDbBtn" class="text-slate-500 hover:text-emerald-400 transition-colors ml-1" title="Export DB to JSON">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            </button>
+          </div>
+        </div>
+        <ul class="space-y-1 ml-2 mt-3">
+          <li class="text-sm text-slate-300">
+            <details open>
+              <summary class="cursor-pointer hover:text-cyan-400 select-none flex items-center gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-slate-500"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                main_db
+              </summary>
+              <ul id="tableTree" class="ml-4 mt-1 border-l border-slate-700 pl-2 space-y-1 transition-all">
+                <!-- JS -->
+              </ul>
+            </details>
+          </li>
+        </ul>
+      </div>
+
+      <!-- 履歴パネル -->
+      <div class="h-1/3 flex flex-col bg-slate-900 shrink-0">
+        <div class="p-3 text-xs font-semibold text-slate-500 uppercase tracking-widest flex items-center gap-1 border-b border-slate-800">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          History
+        </div>
+        <ul id="historyList" class="flex-1 overflow-y-auto p-2 space-y-1"></ul>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============================================================================ -->
+  <!-- メイン領域 -->
+  <!-- ============================================================================ -->
+  <main class="flex-1 flex flex-col overflow-hidden relative">
+    
+    <!-- トランザクションインジケーター -->
+    <div id="txIndicator" class="absolute top-0 left-0 w-full bg-amber-500/90 text-amber-950 text-xs font-bold py-1 px-4 text-center hidden z-30 tracking-widest uppercase shadow-lg backdrop-blur">
+      Active Transaction (Uncommitted)
+    </div>
+
+    <!-- エディタ部分 -->
+    <div class="p-4 pt-6 border-b border-slate-800 bg-slate-900/50 flex flex-col shrink-0">
+      <div class="flex justify-between items-center mb-2">
+        <label class="text-sm font-semibold text-slate-400 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+          Query Workspace
+        </label>
+        <div class="flex gap-2">
+          <button id="clearBtn" class="text-xs text-slate-500 hover:text-slate-300 transition-colors px-2 py-1 border border-transparent hover:border-slate-700 rounded">Clear</button>
+          <span class="text-xs text-slate-500 px-2 py-1 hidden md:inline">Ctrl+Z to Undo, Ctrl+Enter to Run</span>
+        </div>
+      </div>
+      
+      <div class="relative w-full h-28 md:h-32 bg-slate-950 border border-slate-700 rounded-xl overflow-hidden focus-within:border-cyan-500 focus-within:ring-1 focus-within:ring-cyan-500 transition-all">
+        <pre id="highlightLayer" aria-hidden="true" class="absolute inset-0 m-0 pointer-events-none text-slate-300 overflow-hidden bg-transparent z-0"></pre>
+        <textarea id="queryInput" class="absolute inset-0 w-full h-full bg-transparent text-transparent caret-slate-200 outline-none resize-none z-10" spellcheck="false"></textarea>
+      </div>
+
+      <div class="flex justify-end mt-3 flex-wrap gap-2">
+        <button id="explainBtn" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-1.5 rounded-lg font-medium text-sm flex items-center gap-2 transition-all border border-slate-700">
+          Explain
+        </button>
+        <button id="executeBtn" class="bg-cyan-600 hover:bg-cyan-500 text-white px-6 py-1.5 rounded-lg font-medium text-sm flex items-center gap-2 transition-all disabled:opacity-50 shadow-lg shadow-cyan-900/50">
+          <span id="executeBtnText" class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            Run
+          </span>
+        </button>
+      </div>
+    </div>
+
+    <!-- メトリクス -->
+    <div class="px-4 md:px-6 py-2 bg-slate-950 flex flex-wrap justify-between items-center border-b border-slate-800/50 shrink-0">
+      <div class="flex gap-4 md:gap-8 overflow-x-auto no-scrollbar w-full md:w-auto mb-2 md:mb-0">
+        <div class="flex flex-col shrink-0">
+          <span class="text-[10px] text-slate-500 uppercase tracking-wider">Time</span>
+          <span id="metricTime" class="text-sm font-mono text-cyan-400">---</span>
+        </div>
+        <div class="flex flex-col shrink-0">
+          <span class="text-[10px] text-slate-500 uppercase tracking-wider">Rows</span>
+          <span id="metricRows" class="text-sm font-mono text-slate-300">---</span>
+        </div>
+        <div class="flex flex-col shrink-0">
+          <span class="text-[10px] text-slate-500 uppercase tracking-wider">Efficiency</span>
+          <span id="metricEfficiency" class="text-sm font-mono text-purple-400">---</span>
+        </div>
+        
+        <!-- 断片化メーター ＆ VACUUM ボタン -->
+        <div class="flex flex-col shrink-0 min-w-[120px]">
+          <div class="flex justify-between items-center w-full">
+            <span class="text-[10px] text-slate-500 uppercase tracking-wider">Fragmentation</span>
+            <button id="optimizeBtn" class="text-[9px] bg-emerald-900/30 hover:bg-emerald-800/60 text-emerald-400 border border-emerald-800/50 px-1.5 py-0.5 rounded transition-colors" title="Reset Entropy">VACUUM</button>
+          </div>
+          <div class="flex items-center gap-2 mt-0.5">
+            <span id="metricFragmentation" class="text-sm font-mono text-emerald-400">0.0%</span>
+            <div class="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+              <div id="fragBar" class="h-full bg-emerald-500 w-0 transition-all duration-500"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 結果表示のコントロール (Limit) & CSV Export -->
+      <div class="flex items-center gap-3 shrink-0 mt-2 md:mt-0">
+        <button id="exportCsvBtn" class="bg-slate-800 hover:bg-amber-900/60 text-slate-400 hover:text-amber-400 border border-slate-700 hover:border-amber-700/50 px-3 py-1 rounded text-[11px] uppercase tracking-wider flex items-center gap-1.5 transition-colors disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed" disabled title="Export current observation results to CSV">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Export CSV
+        </button>
+        <div class="flex items-center gap-2">
+          <label for="displayLimit" class="text-[10px] text-slate-500 uppercase tracking-wider">Display Limit</label>
+          <select id="displayLimit" class="bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1 outline-none focus:border-cyan-500 transition-colors cursor-pointer">
+            <option value="1">1</option>
+            <option value="100" selected>100</option>
+            <option value="10000">10,000</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- 結果エリア -->
+    <div id="resultsContainer" class="flex-1 overflow-auto p-4 bg-[#0a0f18] relative">
+      <div id="resultsArea" class="min-h-full flex flex-col">
+        <div class="m-auto flex items-center justify-center text-slate-600 flex-col gap-4 h-full">
+          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="9" y1="9" x2="9" y2="21"></line><line x1="15" y1="9" x2="15" y2="21"></line></svg>
+          <p class="text-sm">Run a query to see results.</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ============================================================================ -->
+  <!-- モーダル: API Playground & Integration -->
+  <!-- ============================================================================ -->
+  <div id="apiModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div id="apiOverlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity cursor-pointer"></div>
+    <div class="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl p-6 m-4 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3 shrink-0">
+        <h2 class="text-lg font-semibold text-slate-200 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+          API Playground & Integration
+        </h2>
+        <button id="closeApiBtn" class="text-slate-500 hover:text-slate-300">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      
+      <div class="space-y-6">
+        <!-- 内部API -->
+        <div class="space-y-2">
+          <h3 class="text-sm font-semibold text-cyan-400">1. Internal Browser Interception</h3>
+          <p class="text-[12px] text-slate-400">
+            左ペインのAPIをONにすると、ブラウザコンソールからの <code class="bg-slate-800 px-1 py-0.5 rounded text-pink-300">fetch('/api/v1/query')</code> や、他ウィンドウからの <code class="bg-slate-800 px-1 py-0.5 rounded text-pink-300">postMessage</code> をLuminaDBが傍受して応答します。
+          </p>
+          <div class="flex items-center gap-2 bg-slate-950 px-3 py-2 rounded-lg border border-slate-800 mt-2">
+            <span class="text-xs font-bold text-emerald-400">POST</span>
+            <span class="text-sm font-mono text-slate-300">/api/v1/query</span>
+          </div>
+          <textarea id="apiRequestInput" class="bg-slate-950 border border-slate-700 text-slate-300 text-sm font-mono rounded-lg px-3 py-2 outline-none focus:border-pink-500 transition-colors w-full h-20 resize-none mt-2" spellcheck="false">{
+  "query": "SELECT * FROM users"
+}</textarea>
+          <div class="flex justify-end mt-1">
+            <button id="apiSendBtn" class="bg-pink-600 hover:bg-pink-500 text-white px-5 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-all shadow-lg shadow-pink-900/50">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              Send Internal Fetch
+            </button>
+          </div>
+          <pre id="apiResponseOutput" class="bg-slate-950 border border-slate-800 text-slate-400 text-xs font-mono rounded-lg p-3 overflow-y-auto h-32 mt-2">Awaiting request...</pre>
+        </div>
+
+        <!-- 外部API (Node.js Server) -->
+        <div class="space-y-2 pt-4 border-t border-slate-800">
+          <h3 class="text-sm font-semibold text-indigo-400 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+            2. External Access (Node.js Standalone Server)
+          </h3>
+          <p class="text-[12px] text-slate-400 leading-relaxed">
+            ブラウザのセキュリティにより、HTMLから直接TCPポートを開いて外部からのリクエストを受信することはできません。<br>
+            外部のプログラム（Pythonスクリプトやcurlコマンド等）からLuminaDBを直接叩きたい場合は、現在のデータとコアエンジンを内包したスタンドアロンのNode.jsサーバーをエクスポートしてください。
+          </p>
+          <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 mt-2">
+            <code class="text-[11px] font-mono text-slate-300 block mb-2">$ node luminadb_server.js</code>
+            <code class="text-[11px] font-mono text-slate-500 block break-all">$ curl -X POST http://localhost:8080/api/v1/query -H "Content-Type: application/json" -d '{"query":"SELECT * FROM users"}'</code>
+          </div>
+          <div class="flex justify-end mt-3">
+            <button id="downloadNodeServerBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded-lg text-sm flex items-center gap-2 transition-all shadow-lg shadow-indigo-900/50">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              Export Standalone Server
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================ -->
+  <!-- モーダル: Data Generator -->
+  <!-- ============================================================================ -->
+  <div id="generatorModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div id="generatorOverlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity cursor-pointer"></div>
+    <div class="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-sm p-6 m-4 flex flex-col gap-5">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h2 class="text-lg font-semibold text-slate-200 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+          Data Generator
+        </h2>
+        <button id="closeGeneratorBtn" class="text-slate-500 hover:text-slate-300">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      
+      <p class="text-[13px] text-slate-400">選択したテーブルにダミーデータを10,000件注入します。実行後、システムのデータ断片化が増加します。</p>
+      
+      <div class="flex flex-col gap-2 mt-2">
+        <label class="text-sm font-semibold text-slate-300">Target Table</label>
+        <select id="genTableSelect" class="bg-indigo-950 border border-indigo-800 text-indigo-300 text-sm font-mono rounded-lg px-3 py-2 outline-none focus:border-indigo-500 transition-colors cursor-pointer w-full">
+          <!-- JSで動的に追加されます -->
+        </select>
+      </div>
+      
+      <div class="pt-3 flex justify-end">
+        <button id="generateBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded-lg text-sm flex items-center gap-2 transition-all shadow-lg shadow-indigo-900/50">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+          Inject 10k Rows
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================ -->
+  <!-- モーダル: CSV Import -->
+  <!-- ============================================================================ -->
+  <div id="csvModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div id="csvOverlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity cursor-pointer"></div>
+    <div class="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-sm p-6 m-4 flex flex-col gap-5">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h2 class="text-lg font-semibold text-slate-200 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="16" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          CSV Import
+        </h2>
+        <button id="closeCsvBtn" class="text-slate-500 hover:text-slate-300">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      
+      <p class="text-[13px] text-slate-400 leading-relaxed">
+        ローカルのCSVデータを既存のテーブルに取り込み（追加）します。<br>
+        <span class="text-amber-400">※対象テーブルのカラム数とCSVの列数が完全に一致している必要があります。（1行目はヘッダーとして無視されます）</span>
+      </p>
+      
+      <div class="flex flex-col gap-2 mt-2">
+        <label class="text-sm font-semibold text-slate-300">Target Table</label>
+        <select id="csvTableSelect" class="bg-slate-950 border border-slate-700 text-amber-300 text-sm font-mono rounded-lg px-3 py-2 outline-none focus:border-amber-500 transition-colors cursor-pointer w-full">
+          <!-- JSで動的に追加されます -->
+        </select>
+      </div>
+
+      <div class="flex flex-col gap-2 mt-2">
+        <label class="text-sm font-semibold text-slate-300">CSV File</label>
+        <input type="file" id="csvFileInput" accept=".csv" class="text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-amber-900/40 file:text-amber-300 hover:file:bg-amber-800/60 cursor-pointer">
+      </div>
+      
+      <div class="pt-3 flex justify-end">
+        <button id="execCsvImportBtn" class="bg-amber-600 hover:bg-amber-500 text-white px-5 py-2 rounded-lg text-sm flex items-center gap-2 transition-all shadow-lg shadow-amber-900/50">
+          Import Data
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================================ -->
+  <!-- モーダル: 物理パラメータ設定 -->
+  <!-- ============================================================================ -->
+  <div id="settingsModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div id="modalOverlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity cursor-pointer"></div>
+    <div class="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md p-6 m-4 flex flex-col gap-6">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-4">
+        <h2 class="text-lg font-semibold text-slate-200">Engine Settings</h2>
+        <button id="closeSettingsBtn" class="text-slate-500 hover:text-slate-300">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="space-y-6">
+        <div class="space-y-3">
+          <div class="flex justify-between items-end">
+            <label class="text-sm text-slate-300">Connection Mode</label>
+            <span id="connSpeedVal" class="text-xs font-mono text-cyan-400">In-Process</span>
+          </div>
+          <input type="range" min="0" max="100" value="0" id="connSpeed" class="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"/>
+          <p class="text-[11px] text-slate-400 leading-relaxed">0に近づくほどネットワーク層をバイパスし応答速度が最大化します。</p>
+        </div>
+        <div class="space-y-3">
+          <div class="flex justify-between items-end">
+            <label class="text-sm text-slate-300">Data Packing Density</label>
+            <span id="dataDensityVal" class="text-xs font-mono text-purple-400">100%</span>
+          </div>
+          <input type="range" min="0" max="100" value="100" id="dataDensity" class="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500"/>
+          <p class="text-[11px] text-slate-400 leading-relaxed">メモリ上のデータ圧縮率です。高密度に配置するほどキャッシュ効率が上がります。</p>
+        </div>
+        <div class="space-y-3 pt-4 border-t border-slate-800">
+          <div class="flex justify-between items-end">
+            <label class="text-sm text-slate-300">Concurrency Safety</label>
+            <span id="securityStrictVal" class="text-xs font-mono text-emerald-400">Strict (Lock-free)</span>
+          </div>
+          <input type="range" min="0" max="100" value="100" id="securityStrictness" class="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"/>
+          <p class="text-[11px] text-slate-400 leading-relaxed">並行処理時の保護レベルです。 Strictにすると安全に高速処理されます。</p>
+        </div>
+      </div>
+      <div class="pt-4 flex justify-end">
+        <button id="applySettingsBtn" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2 rounded text-sm border border-slate-700">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- モーダル: Explain -->
+  <div id="explainModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div id="explainOverlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity cursor-pointer"></div>
+    <div class="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl p-6 m-4 flex flex-col gap-4">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h2 class="text-lg font-semibold text-slate-200">実行プラン (Execution Plan)</h2>
+        <button id="closeExplainBtn" class="text-slate-500 hover:text-slate-300">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div id="explainContent" class="space-y-4 max-h-[60vh] overflow-y-auto pr-2 no-scrollbar font-mono text-sm"></div>
+    </div>
+  </div>
+
+  <!-- モーダル: Command Reference -->
+  <div id="helpModal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div id="helpOverlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity cursor-pointer"></div>
+    <div class="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-3xl p-6 m-4 flex flex-col gap-4 max-h-[85vh]">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3 shrink-0">
+        <h2 class="text-lg font-semibold text-slate-200 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          Command Reference
+        </h2>
+        <button id="closeHelpBtn" class="text-slate-500 hover:text-slate-300">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      
+      <div class="flex justify-between items-center shrink-0">
+        <p class="text-xs text-slate-400 max-w-md">LuminaDBで現在利用可能なコマンド一覧です。テーブルを指定してテンプレートをエディタに入力できます。</p>
+        <div class="flex items-center gap-2">
+          <label class="text-sm font-semibold text-slate-300">Target Table:</label>
+          <select id="helpTableSelect" class="bg-slate-950 border border-slate-700 text-cyan-300 text-sm font-mono rounded-lg px-3 py-1.5 outline-none focus:border-cyan-500 transition-colors cursor-pointer w-40">
+            <!-- JSで動的に追加されます -->
+          </select>
+        </div>
+      </div>
+
+      <div class="overflow-y-auto pr-2 mt-2 space-y-3" id="helpContent">
+        <!-- JSで動的にコマンドリストが描画されます -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================================
+    // [INTERNAL ENGINE] (Holographic Parser Upgraded - Bug Fixed)
+    // ============================================================================
+    class ZeroMassEngine {
+      constructor() {
+        this.storageSoA = {
+          users: {
+            id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            name: ["Alice", "Bob", "Charlie", "Dave", "Eve", "Frank", "Grace", "Heidi", "Ivan", "Judy"],
+            age: [25, 30, 22, 35, 28, 40, 29, 31, 24, 27],
+            status: ["Active", "Active", "Inactive", "Active", "Active", "Active", "Inactive", "Active", "Active", "Active"]
+          },
+          products: {
+            id: [101, 102, 103, 104, 105],
+            name: ["Quantum CPU", "Holo-Monitor", "Zero-G Mouse", "Tachyon Keyboard", "Entanglement Router"],
+            price: [1500, 800, 120, 250, 400],
+            stock: [45, 12, 100, 80, 0]
+          },
+          orders: {
+            order_id: [1001, 1002, 1003, 1004, 1005],
+            user_id: [1, 2, 1, 3, 4],
+            product_id: [101, 103, 105, 102, 104],
+            amount: [1, 2, 1, 5, 1]
+          }
+        };
+        
+        this.epsilon_memory = 0.5;
+        this.mu_runtime = 0.5;
+        this.fragmentation = 0.0;
+        
+        this.inTransaction = false;
+        this.snapshotSoA = null;
+      }
+
+      updatePhysics(c, d, s) {
+        this.epsilon_memory = Math.max(0.01, c / 100); 
+        this.mu_runtime = 1.0 - (d / 100 * 0.5) - (s / 100 * 0.3);
+      }
+
+      generateDummyData(tableName) {
+        const count = 10000;
+        if (!this.storageSoA[tableName]) return 0;
+        const data = this.storageSoA[tableName];
+        const cols = Object.keys(data);
+        const idCol = cols.find(c => c.toLowerCase().includes('id'));
+        let startId = 1;
+        if (idCol && data[idCol].length > 0) {
+           startId = Math.max(...data[idCol].filter(v => typeof v === 'number')) + 1;
+           if (!isFinite(startId)) startId = 1;
+        }
+
+        for(let i=0; i<count; i++) {
+           cols.forEach(col => {
+              if (col === idCol) data[col].push(startId + i);
+              else if (col === 'name') data[col].push("Dummy_" + Math.floor(Math.random()*100000));
+              else if (col === 'age') data[col].push(20 + Math.floor(Math.random()*50));
+              else if (col === 'status') data[col].push(Math.random() > 0.2 ? "Active" : "Inactive");
+              else if (col === 'price') data[col].push(Math.floor(Math.random()*1000)*10);
+              else if (col === 'stock' || col === 'amount') data[col].push(Math.floor(Math.random()*100));
+              else {
+                 if (data[col].length > 0 && typeof data[col][0] === 'number') data[col].push(Math.floor(Math.random()*1000));
+                 else data[col].push("Data_" + Math.floor(Math.random()*1000));
+              }
+           });
+        }
+        this.fragmentation = Math.min(100, this.fragmentation + 5);
+        return count;
+      }
+
+      explainQuery(sqlString) {
+        let sql = sqlString.trim().replace(/;$/, '');
+        let plan = [{ step: 1, action: "構文解析と最適化", detail: "入力されたSQLを解析し、内部で実行可能な命令に変換します。" }];
+        
+        if (/\(\s*SELECT/i.test(sql)) {
+          plan.push({ step: plan.length + 1, action: "サブクエリの展開", detail: "ネストされたクエリ（サブクエリ）を先に実行し、結果をメインのクエリに統合します。" });
+        }
+        
+        if (/^begin/i.test(sql)) {
+          plan.push({ step: plan.length + 1, action: "トランザクション開始", detail: "現在のデータ状態をバックアップし、安全に変更を行える状態にします。" });
+        } else if (/^select/i.test(sql)) {
+          let step = plan.length + 1;
+          if (/join/i.test(sql)) plan.push({ step: step++, action: "テーブル結合 (JOIN)", detail: "複数のテーブルを関連付け、ON条件に基づいてデータを結びつけます。" });
+          if (/where/i.test(sql)) plan.push({ step: step++, action: "データ絞り込み (WHERE)", detail: "検索条件を評価し、対象となるデータ行を高速に抽出します。" });
+          if (/group\s+by/i.test(sql)) plan.push({ step: step++, action: "データのグループ化 (GROUP BY)", detail: "指定されたカラムの値でデータをグループに分け、集計の準備をします。" });
+          plan.push({ step: step++, action: "カラムの抽出と計算 (SELECT & AS)", detail: "必要なカラムを取り出し、別名（AS）やCASE文などの計算を適用します。" });
+          if (/having/i.test(sql)) plan.push({ step: step++, action: "集計後の絞り込み (HAVING)", detail: "グループ化や集計を行った後の結果に対して、さらに条件で絞り込みます。" });
+          if (/order\s+by/i.test(sql)) plan.push({ step: step++, action: "データの並び替え (ORDER BY)", detail: "指定された順序（昇順・降順）で結果のデータを並び替えます。" });
+          if (/limit/i.test(sql)) plan.push({ step: step++, action: "取得件数の制限 (LIMIT)", detail: "最終的に表示するデータの最大件数や開始位置を制限します。" });
+        } else if (/^insert/i.test(sql)) {
+          plan.push({ step: 2, action: "データの一括追加 (INSERT)", detail: "新しいデータをテーブルの末尾に効率的に追加します。" });
+        } else if (/^update/i.test(sql)) {
+          plan.push({ step: 2, action: "データの更新 (UPDATE)", detail: "指定された条件に一致するデータを、新しい値で直接書き換えます。" });
+        } else if (/^delete/i.test(sql)) {
+          plan.push({ step: 2, action: "データの削除 (DELETE)", detail: "指定された条件に一致するデータをテーブルから削除します。" });
+        } else if (/^create\s+table/i.test(sql)) {
+          plan.push({ step: 2, action: "テーブルの作成 (CREATE TABLE)", detail: "新しいテーブルの構造（スキーマ）をメモリ上に確保して定義します。" });
+        } else if (/^drop\s+table/i.test(sql)) {
+          plan.push({ step: 2, action: "テーブルの削除 (DROP TABLE)", detail: "指定されたテーブル自体とそのすべてのデータを完全に消去します。" });
+        } else if (/^truncate\s+table/i.test(sql)) {
+          plan.push({ step: 2, action: "テーブルの初期化 (TRUNCATE TABLE)", detail: "テーブルの構造は残したまま、中身のデータを一瞬で全て消去します。" });
+        } else if (/^(optimize|vacuum)/i.test(sql)) {
+          plan.push({ step: 2, action: "データの最適化 (VACUUM / OPTIMIZE)", detail: "メモリの断片化を解消し、データを再圧縮してパフォーマンスを回復します。" });
+        }
+        return plan;
+      }
+
+      findInnerSubquery(sql) {
+          let depth = 0, maxDepth = 0, startIdx = -1, endIdx = -1;
+          for (let i = 0; i < sql.length; i++) {
+              if (sql[i] === '(') {
+                  depth++;
+                  if (/^\(\s*SELECT\b/i.test(sql.slice(i)) && depth >= maxDepth) { maxDepth = depth; startIdx = i; }
+              } else if (sql[i] === ')') {
+                  if (startIdx !== -1 && depth === maxDepth && endIdx === -1) endIdx = i;
+                  depth--;
+              }
+          }
+          return (startIdx !== -1 && endIdx !== -1) ? { start: startIdx, end: endIdx, query: sql.slice(startIdx + 1, endIdx).trim() } : null;
+      }
+
+      expandSubqueries(sql, strMap) {
+          let expandedSql = sql;
+          while(true) {
+              let match = this.findInnerSubquery(expandedSql);
+              if (!match) break;
+              
+              let subResult = this.executeHolographicQuery(match.query, true, strMap); 
+              if(subResult.error) throw new Error(subResult.error);
+              
+              const beforeStr = expandedSql.slice(0, match.start);
+              if (/\bIN\s*$/i.test(beforeStr.trim())) {
+                  const vals = subResult.data.map(r => Object.values(r)[0]);
+                  const valsStr = vals.map(v => {
+                      if (typeof v === 'string') {
+                          strMap.push(`'${v}'`);
+                          return `__LUMINA_STR_${strMap.length - 1}__`;
+                      }
+                      return v;
+                  }).join(', ');
+                  expandedSql = expandedSql.slice(0, match.start) + `(${valsStr})` + expandedSql.slice(match.end + 1);
+              } else if (/\bFROM\s*$/i.test(beforeStr.trim()) || /\bJOIN\s*$/i.test(beforeStr.trim())) {
+                  const tmpName = '__tmp_' + Math.floor(Math.random()*1000000);
+                  this.storageSoA[tmpName] = this.convertAosToSoa(subResult.data);
+                  expandedSql = expandedSql.slice(0, match.start) + tmpName + expandedSql.slice(match.end + 1);
+              } else {
+                  let val = subResult.data.length > 0 ? Object.values(subResult.data[0])[0] : null;
+                  if (typeof val === 'string') {
+                      strMap.push(`'${val}'`);
+                      val = `__LUMINA_STR_${strMap.length - 1}__`;
+                  }
+                  expandedSql = expandedSql.slice(0, match.start) + val + expandedSql.slice(match.end + 1);
+              }
+          }
+          return expandedSql;
+      }
+
+      convertAosToSoa(aosData) {
+          if (!aosData || aosData.length === 0) return {};
+          let soa = {};
+          let keys = Object.keys(aosData[0]).filter(k => !k.includes('.')); 
+          keys.forEach(k => soa[k] = []);
+          aosData.forEach(row => { keys.forEach(k => soa[k].push(row[k])); });
+          return soa;
+      }
+
+      cleanupTempTables() {
+          Object.keys(this.storageSoA).forEach(tbl => {
+              if (tbl.startsWith('__tmp_')) delete this.storageSoA[tbl];
+          });
+      }
+
+      // ------------------------------------------------------------------------
+      // 堅牢な動的ASTコンパイラ (識別子崩壊と正規表現エスケープの修正パッチ適用)
+      // ------------------------------------------------------------------------
+      compileCondition(expr, strMap) {
+          let s = expr;
+          
+          let caseMatch;
+          while((caseMatch = s.match(/\bCASE\s+WHEN\s+(.+?)\s+THEN\s+(.+?)(?:\s+ELSE\s+(.+?))?\s+END\b/i))) {
+              s = s.replace(caseMatch[0], `((${caseMatch[1]}) ? (${caseMatch[2]}) : (${caseMatch[3] || 'null'}))`);
+          }
+          
+          // IS NULL / IS NOT NULL
+          s = s.replace(/\bIS\s+NOT\s+NULL\b/gi, '!== null')
+               .replace(/\bIS\s+NULL\b/gi, '=== null');
+
+          // BETWEEN a AND b (末尾の条件を緩和)
+          s = s.replace(/([a-zA-Z0-9_.]+)\s+BETWEEN\s+(.+?)\s+AND\s+(.+?)(?=\s*(?:AND\b|OR\b|\)|$))/gi, (m, col, a, b) => {
+              return `(__resolve(row, '${col}') >= ${a} && __resolve(row, '${col}') <= ${b})`;
+          });
+
+          // LIKE / NOT LIKE
+          s = s.replace(/([a-zA-Z0-9_.]+)\s+(NOT\s+)?LIKE\s+(__LUMINA_STR_\d+__)/gi, (m, col, not, strRef) => {
+              return `${not ? '!' : ''}__like(__resolve(row, '${col}'), ${strRef})`;
+          });
+          
+          // 基本論理演算子と等価演算子の変換
+          s = s.replace(/\bAND\b/gi, '&&').replace(/\bOR\b/gi, '||')
+               .replace(/!==/g, '__NEQ__').replace(/===/g, '=')
+               .replace(/<=/g, '__LTE__').replace(/>=/g, '__GTE__').replace(/<>/g, '__NEQ__').replace(/!=/g, '__NEQ__')
+               .replace(/</g, '__LT__').replace(/>/g, '__GT__')
+               .replace(/=/g, '===')
+               .replace(/__LTE__/g, '<=').replace(/__GTE__/g, '>=').replace(/__NEQ__/g, '!==').replace(/__LT__/g, '<').replace(/__GT__/g, '>');
+
+          // IN (...)
+          s = s.replace(/([a-zA-Z0-9_.]+)\s+IN\s*\(([^)]+)\)/gi, (m, col, vals) => `[${vals}].includes(__resolve(row, '${col}'))`);
+
+          // カラム名（変数名）の解決時の自己崩壊を防ぐための絶対保護リストと文字列リテラルの保護
+          const protectedKeywords = ['&&', '||', 'true', 'false', 'null', 'undefined', '__like', '__resolve', 'row', 'includes', 'Math', 'Date'];
+          s = s.replace(/('([^'\\]|\\.)*'|"([^"\\]|\\.)*")|\b([a-zA-Z_][a-zA-Z0-9_.]*)\b/g, (m, stringLit, _1, _2, word) => {
+              if (stringLit) return m;
+              if (!word) return m;
+              if (protectedKeywords.includes(word) || word.startsWith('__LUMINA_STR_')) return word;
+              return `__resolve(row, '${word}')`;
+          });
+
+          // 文字列の復元 (String Isolation)
+          strMap.forEach((str, i) => {
+              s = s.replace(new RegExp(`__LUMINA_STR_${i}__`, 'g'), str);
+          });
+
+          // LIKE演算子における特殊文字エスケープ処理の組み込み
+          return new Function('row', `
+              const __resolve = (r, c) => r[c] !== undefined ? r[c] : null;
+              const __like = (val, pattern) => {
+                 if(val === null || val === undefined) return false;
+                 let regexPattern = '^' + pattern.replace(/[.+?^\\$\\{\\}()|\\[\\]\\\\]/g, '\\\\$&').replace(/%/g, '.*').replace(/_/g, '.') + '$';
+                 return new RegExp(regexPattern, 'i').test(String(val));
+              };
+              try { return ${s}; } catch(e) { return null; }
+          `);
+      }
+
+      splitSelectClause(clause) {
+          let parts = [], current = "", depth = 0;
+          for (let i = 0; i < clause.length; i++) {
+              let c = clause[i];
+              if (c === '(') depth++;
+              if (c === ')') depth--;
+              if (c === ',' && depth === 0) { parts.push(current.trim()); current = ""; } 
+              else { current += c; }
+          }
+          parts.push(current.trim());
+          return parts;
+      }
+
+      executeHolographicQuery(rawSql, isSubquery = false, externalStrMap = null) {
+        const startTime = performance.now();
+        let sql = rawSql.trim().replace(/;$/, '');
+        const m_abs = sql.length * 0.1; 
+        
+        // --- String Isolation (文字列リテラルのグローバル退避) ---
+        let strMap = externalStrMap;
+        if (!isSubquery && !strMap) {
+            strMap = [];
+            sql = sql.replace(/('([^'\\]|\\.)*'|"([^"\\]|\\.)*")/g, match => {
+                strMap.push(match);
+                return `__LUMINA_STR_${strMap.length - 1}__`;
+            });
+        }
+        
+        let resultSet = [];
+        let affectedRows = 0;
+
+        try {
+          if (!isSubquery) sql = this.expandSubqueries(sql, strMap);
+
+          if (/^begin/i.test(sql)) {
+             if(this.inTransaction) throw new Error("Transaction already active.");
+             this.inTransaction = true;
+             this.snapshotSoA = JSON.parse(JSON.stringify(this.storageSoA));
+             resultSet = [{ Result: "Success", Message: "Transaction Started" }];
+          } 
+          else if (/^commit/i.test(sql)) {
+             if(!this.inTransaction) throw new Error("No active transaction.");
+             this.inTransaction = false; this.snapshotSoA = null;
+             resultSet = [{ Result: "Success", Message: "Transaction Committed" }];
+          }
+          else if (/^rollback/i.test(sql)) {
+             if(!this.inTransaction) throw new Error("No active transaction.");
+             this.storageSoA = this.snapshotSoA;
+             this.inTransaction = false; this.snapshotSoA = null;
+             resultSet = [{ Result: "Success", Message: "Transaction Rolled Back" }];
+          }
+          // --- Advanced SELECT ---
+          else if (/^select/i.test(sql)) {
+             let tempSql = sql;
+             let limitVal = null, offsetVal = null;
+             let orderByStr = null, havingStr = null, groupByStr = null, whereStr = null;
+             
+             // LIMIT / OFFSET 
+             const limitMatch = tempSql.match(/\s+limit\s+(\d+)/i);
+             if(limitMatch) { limitVal = limitMatch[1]; tempSql = tempSql.replace(limitMatch[0], ''); }
+             const offsetMatch = tempSql.match(/\s+offset\s+(\d+)/i);
+             if(offsetMatch) { offsetVal = offsetMatch[1]; tempSql = tempSql.replace(offsetMatch[0], ''); }
+
+             // 改行を跨ぐ可能性がある各句は [\s\S]+ を使用して末尾まで確実にキャプチャする
+             const oMatch = tempSql.match(/\s+order\s+by\s+([\s\S]+)$/i);
+             if(oMatch) { orderByStr = oMatch[1]; tempSql = tempSql.substring(0, oMatch.index); }
+             
+             const hMatch = tempSql.match(/\s+having\s+([\s\S]+)$/i);
+             if(hMatch) { havingStr = hMatch[1]; tempSql = tempSql.substring(0, hMatch.index); }
+
+             const gMatch = tempSql.match(/\s+group\s+by\s+([\s\S]+)$/i);
+             if(gMatch) { groupByStr = gMatch[1]; tempSql = tempSql.substring(0, gMatch.index); }
+             
+             const wMatch = tempSql.match(/\s+where\s+([\s\S]+)$/i);
+             if(wMatch) { whereStr = wMatch[1]; tempSql = tempSql.substring(0, wMatch.index); }
+             
+             const joins = [];
+             const joinRegex = /\b(LEFT\s+|INNER\s+|RIGHT\s+)?JOIN\s+([a-zA-Z0-9_]+)(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?\s+ON\s+([\s\S]+?)(?=\b(?:LEFT|INNER|RIGHT)?\s*JOIN\b|$)/gi;
+             let jMatch;
+             while ((jMatch = joinRegex.exec(tempSql)) !== null) {
+                 joins.push({
+                     type: jMatch[1] ? jMatch[1].trim().toUpperCase() : 'INNER',
+                     table: jMatch[2],
+                     alias: jMatch[3] || jMatch[2],
+                     onCond: jMatch[4].trim()
+                 });
+             }
+             if (joins.length > 0) tempSql = tempSql.substring(0, tempSql.indexOf(joins[0].type === 'LEFT' ? 'LEFT' : 'JOIN') - 1);
+             
+             // FROM句も改行対応
+             const fMatch = tempSql.match(/^select\s+([\s\S]+?)\s+from\s+([a-zA-Z0-9_]+)(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?/i);
+             if(!fMatch) throw new Error("Syntax error in SELECT statement.");
+             
+             const selectClause = fMatch[1].trim();
+             const fromTable = fMatch[2].trim();
+             const baseAlias = fMatch[3] || fromTable;
+
+             if (!this.storageSoA[fromTable]) throw new Error(`Table '${fromTable}' not found.`);
+             
+             let rows = [];
+             const baseData = this.storageSoA[fromTable];
+             const rowCount = baseData[Object.keys(baseData)[0]]?.length || 0;
+             
+             for(let i=0; i<rowCount; i++) {
+                 let row = {};
+                 Object.keys(baseData).forEach(k => {
+                     let v = baseData[k][i]; row[k] = v; row[`${fromTable}.${k}`] = v; row[`${baseAlias}.${k}`] = v;
+                 });
+                 rows.push(row);
+             }
+             
+             joins.forEach(join => {
+                 if (!this.storageSoA[join.table]) throw new Error(`Join Table '${join.table}' not found.`);
+                 let joinData = this.storageSoA[join.table];
+                 let joinCount = joinData[Object.keys(joinData)[0]]?.length || 0;
+                 let onFunc = this.compileCondition(join.onCond, strMap);
+                 let newRows = [];
+                 rows.forEach(leftRow => {
+                     let matched = false;
+                     for(let j=0; j<joinCount; j++) {
+                         let combinedRow = { ...leftRow };
+                         Object.keys(joinData).forEach(k => {
+                             let v = joinData[k][j]; combinedRow[k] = v; combinedRow[`${join.table}.${k}`] = v; combinedRow[`${join.alias}.${k}`] = v;
+                         });
+                         if (onFunc(combinedRow)) { newRows.push(combinedRow); matched = true; }
+                     }
+                     if (!matched && join.type === 'LEFT') {
+                         let combinedRow = { ...leftRow };
+                         Object.keys(joinData).forEach(k => { combinedRow[k] = null; combinedRow[`${join.table}.${k}`] = null; combinedRow[`${join.alias}.${k}`] = null; });
+                         newRows.push(combinedRow);
+                     }
+                 });
+                 rows = newRows;
+             });
+
+             if (whereStr) {
+                 let whereFunc = this.compileCondition(whereStr, strMap);
+                 rows = rows.filter(row => whereFunc(row));
+             }
+
+             let selectParts = this.splitSelectClause(selectClause);
+             let isAgg = selectParts.some(p => /COUNT\(|SUM\(|AVG\(/i.test(p));
+
+             let compiledSelects = selectParts.map(part => {
+                 const asMatch = part.match(/(.+?)\s+AS\s+([a-zA-Z0-9_]+)$/i);
+                 let expr = asMatch ? asMatch[1].trim() : part.trim();
+                 let alias = asMatch ? asMatch[2] : expr.replace(/^[a-zA-Z0-9_]+\./, '');
+                 if (expr === '*') return { type: 'star' };
+                 if (/^(COUNT|SUM|AVG)\(/i.test(expr)) {
+                     let m = expr.match(/^(COUNT|SUM|AVG)\(\s*(.+?)\s*\)/i);
+                     return { type: 'agg', func: m[1].toUpperCase(), arg: m[2], alias };
+                 }
+                 let evalFunc = this.compileCondition(expr, strMap); 
+                 return { type: 'expr', evalFunc, alias };
+             });
+
+             // GROUP BY & Aggregation
+             let groups = {};
+             if (groupByStr) {
+                 let groupCols = groupByStr.split(',').map(s=>s.trim());
+                 rows.forEach(row => {
+                     const resolveCol = (r, c) => r[c] !== undefined ? r[c] : (r[`${fromTable}.${c}`] !== undefined ? r[`${fromTable}.${c}`] : null);
+                     let key = groupCols.map(c => resolveCol(row, c)).join('|||');
+                     if(!groups[key]) groups[key] = [];
+                     groups[key].push(row);
+                 });
+             } else {
+                 groups['all'] = rows;
+             }
+
+             if (isAgg || groupByStr) {
+                 let aggResults = [];
+                 Object.keys(groups).forEach(key => {
+                     let groupRows = groups[key];
+                     let aggRow = {};
+                     compiledSelects.forEach(sel => {
+                         if (sel.type === 'agg') {
+                             if (sel.func === 'COUNT') aggRow[sel.alias] = groupRows.length;
+                             else {
+                                 let sum = 0, cnt = 0;
+                                 groupRows.forEach(r => {
+                                     let v = r[sel.arg] !== undefined ? r[sel.arg] : r[`${fromTable}.${sel.arg}`];
+                                     if (typeof v === 'number') { sum += v; cnt++; }
+                                 });
+                                 aggRow[sel.alias] = sel.func === 'SUM' ? sum : (cnt>0 ? Number((sum/cnt).toFixed(2)) : 0);
+                             }
+                         } else if (sel.type === 'expr') {
+                             aggRow[sel.alias] = groupRows.length > 0 ? sel.evalFunc(groupRows[0]) : null;
+                         }
+                     });
+                     aggResults.push(aggRow);
+                 });
+                 resultSet = aggResults;
+                 affectedRows = rows.length;
+             } else {
+                 resultSet = rows.map(row => {
+                     let outRow = {};
+                     compiledSelects.forEach(sel => {
+                         if (sel.type === 'star') {
+                             Object.keys(row).forEach(k => { if (!k.includes('.')) outRow[k] = row[k]; });
+                         } else if (sel.type === 'expr') {
+                             outRow[sel.alias] = sel.evalFunc(row);
+                         }
+                     });
+                     return outRow;
+                 });
+                 affectedRows = resultSet.length;
+             }
+
+             if ((isAgg || groupByStr) && havingStr) {
+                 let havingFunc = this.compileCondition(havingStr, strMap);
+                 resultSet = resultSet.filter(row => havingFunc(row));
+             }
+
+             if (orderByStr && resultSet.length > 0) {
+                 const om = orderByStr.trim().match(/([a-zA-Z0-9_.]+)(?:\s+(asc|desc))?/i);
+                 if (om) {
+                     const sortCol = om[1];
+                     const isDesc = om[2] && om[2].toLowerCase() === 'desc';
+                     resultSet.sort((a, b) => {
+                         let valA = a[sortCol]; let valB = b[sortCol];
+                         if(valA === undefined && !sortCol.includes('.')) valA = a[`${fromTable}.${sortCol}`];
+                         if(valB === undefined && !sortCol.includes('.')) valB = b[`${fromTable}.${sortCol}`];
+                         
+                         if (valA === valB) return 0;
+                         if (valA === null || valA === undefined) return 1; 
+                         if (valB === null || valB === undefined) return -1;
+                         if (valA < valB) return isDesc ? 1 : -1;
+                         return isDesc ? -1 : 1;
+                     });
+                 }
+             }
+
+             if (limitVal !== null) {
+                 let limit = parseInt(limitVal, 10);
+                 let offset = offsetVal !== null ? parseInt(offsetVal, 10) : 0;
+                 resultSet = resultSet.slice(offset, offset + limit);
+             }
+          }
+          // --- Bulk INSERT ---
+          else if (/^insert/i.test(sql)) {
+             const m = sql.match(/insert\s+into\s+([a-zA-Z0-9_]+)\s*\(([^)]+)\)\s*values\s*([\s\S]+)$/i);
+             if (m) {
+                const table = m[1];
+                if (!this.storageSoA[table]) throw new Error(`Table '${table}' not found in the current spacetime.`);
+                const cols = m[2].split(',').map(c => c.trim());
+                const valStr = m[3];
+                const valMatches = [...valStr.matchAll(/\(([^)]+)\)/g)];
+                
+                if(valMatches.length === 0) throw new Error("Syntax Error in INSERT. No values provided.");
+                
+                const tableData = this.storageSoA[table];
+                
+                valMatches.forEach(vm => {
+                    let vals = vm[1].split(',').map(v => {
+                       let val = v.trim();
+                       strMap.forEach((str, i) => {
+                           val = val.replace(new RegExp(`__LUMINA_STR_${i}__`, 'g'), str);
+                       });
+                       if ((val.startsWith("'") && val.endsWith("'")) || (val.startsWith('"') && val.endsWith('"'))) return val.slice(1, -1);
+                       return isNaN(val) ? val : Number(val);
+                    });
+                    if (cols.length !== vals.length) throw new Error("Entropy mismatch: Column count doesn't match value count.");
+                    
+                    const currentRows = tableData[Object.keys(tableData)[0]].length;
+                    cols.forEach((col, idx) => { if (tableData[col] !== undefined) tableData[col].push(vals[idx]); });
+                    Object.keys(tableData).forEach(col => { if (tableData[col].length === currentRows) tableData[col].push(null); });
+                    affectedRows++;
+                });
+
+                this.fragmentation = Math.min(100, this.fragmentation + (valMatches.length * 0.5)); 
+                resultSet = [{Result:"Success", Message:`${affectedRows} rows injected into ${table} spacetime`}];
+             } else throw new Error("Syntax Error in INSERT.");
+          }
+          // --- Dynamic Multi-Column UPDATE ---
+          else if (/^update/i.test(sql)) {
+             const m = sql.match(/update\s+([a-zA-Z0-9_]+)\s+set\s+([\s\S]+?)(?:\s+where\s+([\s\S]+))?$/i);
+             if (m) {
+                const table = m[1];
+                if (!this.storageSoA[table]) throw new Error(`Table '${table}' not found.`);
+                
+                let setStr = m[2];
+                let whereStr = m[3];
+                
+                // カンマ区切りのSET句を安全に分割し、動的ASTを生成する
+                let setParts = this.splitSelectClause(setStr); 
+                let setEvaluators = setParts.map(s => {
+                    let eqIdx = s.indexOf('=');
+                    if(eqIdx === -1) throw new Error("Syntax Error in SET clause.");
+                    let col = s.substring(0, eqIdx).trim();
+                    if (this.storageSoA[table][col] === undefined) throw new Error(`Column '${col}' not found.`);
+                    
+                    let expr = s.substring(eqIdx + 1).trim();
+                    let evalFunc = this.compileCondition(expr, strMap);
+                    return { col, evalFunc };
+                });
+
+                const data = this.storageSoA[table];
+                const rowCount = data[Object.keys(data)[0]]?.length || 0;
+                let targetIndices = [];
+
+                if (whereStr) {
+                   let whereFunc = this.compileCondition(whereStr, strMap);
+                   for (let i = 0; i < rowCount; i++) {
+                       let row = {};
+                       Object.keys(data).forEach(k => row[k] = data[k][i]);
+                       if (whereFunc(row)) targetIndices.push(i);
+                   }
+                } else {
+                    for (let i = 0; i < rowCount; i++) targetIndices.push(i);
+                }
+
+                // 対象行に対してそれぞれ式を評価し、値を更新する
+                targetIndices.forEach(idx => {
+                    let rowContext = {};
+                    Object.keys(data).forEach(k => rowContext[k] = data[k][idx]);
+                    
+                    setEvaluators.forEach(ev => {
+                        let result = ev.evalFunc(rowContext);
+                        data[ev.col][idx] = result;
+                    });
+                });
+
+                affectedRows = targetIndices.length;
+                if (affectedRows > 0) this.fragmentation = Math.min(100, this.fragmentation + 2);
+                resultSet = [{Result:"Success", Message:`${affectedRows} rows dynamically updated.`}];
+             } else throw new Error("Syntax Error in UPDATE.");
+          }
+          else if (/^delete/i.test(sql)) {
+             const m = sql.match(/delete\s+from\s+([a-zA-Z0-9_]+)(?:\s+where\s+([\s\S]+))?$/i);
+             if (m) {
+                const table = m[1];
+                if (!this.storageSoA[table]) throw new Error(`Table '${table}' not found.`);
+                const whereStr = m[2];
+                const data = this.storageSoA[table];
+                const rowCount = data[Object.keys(data)[0]]?.length || 0;
+                let targetIndices = [];
+
+                if (whereStr) {
+                   let whereFunc = this.compileCondition(whereStr, strMap);
+                   for (let i = 0; i < rowCount; i++) {
+                       let row = {};
+                       Object.keys(data).forEach(k => row[k] = data[k][i]);
+                       if (whereFunc(row)) targetIndices.push(i);
+                   }
+                } else {
+                    for (let i = 0; i < rowCount; i++) targetIndices.push(i);
+                }
+
+                for (let i = targetIndices.length - 1; i >= 0; i--) {
+                    const idx = targetIndices[i];
+                    Object.keys(data).forEach(col => data[col].splice(idx, 1));
+                }
+
+                affectedRows = targetIndices.length;
+                if (affectedRows > 0) this.fragmentation = Math.min(100, this.fragmentation + 5);
+                resultSet = [{Result:"Success", Message:`${affectedRows} rows deleted.`}];
+             } else throw new Error("Syntax Error in DELETE.");
+          }
+          // --- テーブル操作 (CREATE, TRUNCATE, DROP) ---
+          else if (/^create\s+table/i.test(sql)) {
+             const m = sql.match(/create\s+table\s+([a-zA-Z0-9_]+)\s*\(([^)]+)\)/i);
+             if (m) {
+                const table = m[1];
+                if (this.storageSoA[table]) throw new Error(`Table '${table}' already exists.`);
+                const cols = m[2].split(',').map(c => c.trim().split(/\s+/)[0]);
+                this.storageSoA[table] = {};
+                cols.forEach(col => this.storageSoA[table][col] = []);
+                this.fragmentation = Math.min(100, this.fragmentation + 1);
+                resultSet = [{Result:"Success", Message:`Table '${table}' created.`}];
+             } else throw new Error("Syntax Error in CREATE TABLE.");
+          }
+          else if (/^truncate\s+table/i.test(sql)) {
+             const m = sql.match(/truncate\s+table\s+([a-zA-Z0-9_]+)/i);
+             if (m) {
+                const table = m[1];
+                if (!this.storageSoA[table]) throw new Error(`Table '${table}' not found.`);
+                const data = this.storageSoA[table];
+                let rowCount = data[Object.keys(data)[0]]?.length || 0;
+                Object.keys(data).forEach(col => data[col] = []);
+                affectedRows = rowCount;
+                this.fragmentation = 0; 
+                resultSet = [{Result:"Success", Message:`${rowCount} rows truncated.`}];
+             } else throw new Error("Syntax Error in TRUNCATE TABLE.");
+          }
+          else if (/^drop\s+table/i.test(sql)) {
+             const m = sql.match(/drop\s+table\s+([a-zA-Z0-9_]+)/i);
+             if (m) {
+                const table = m[1];
+                if (!this.storageSoA[table]) throw new Error(`Table '${table}' not found.`);
+                delete this.storageSoA[table];
+                this.fragmentation = Math.min(100, this.fragmentation + 10);
+                resultSet = [{Result:"Success", Message:`Table '${table}' dropped.`}];
+             } else throw new Error("Syntax Error in DROP TABLE.");
+          }
+          else if (/^(optimize|vacuum)/i.test(sql)) {
+             this.fragmentation = 0.0;
+             resultSet = [{Result:"Success", Message:"Data defragmented. Space curvature reset."}];
+          }
+          else {
+             throw new Error("Syntax Error or Unsupported Command. This command violates causality.");
+          }
+
+        } catch (e) {
+          if (!isSubquery) this.cleanupTempTables();
+          return { error: e.message };
+        }
+
+        if (!isSubquery) this.cleanupTempTables();
+
+        const fragPenalty = 1.0 + (this.fragmentation / 100);
+        const baseComputeTime = performance.now() - startTime; 
+        const simulatedDelayMs = (m_abs * this.epsilon_memory * this.mu_runtime * fragPenalty) * 0.001; 
+        const finalExecutionTime = Math.max(0.00001, simulatedDelayMs + baseComputeTime);
+
+        return {
+          data: resultSet,
+          executionTime: finalExecutionTime.toFixed(3),
+          scannedRows: affectedRows,
+          fragmentation: this.fragmentation.toFixed(1)
+        };
+      }
+    }
+
+    // ============================================================================
+    // [UI Controller] 
+    // ============================================================================
+    const dbEngine = new ZeroMassEngine();
+    let currentResultData = null; 
+
+    const elements = {
+       query: document.getElementById('queryInput'),
+       hl: document.getElementById('highlightLayer'),
+       execBtn: document.getElementById('executeBtn'),
+       execText: document.getElementById('executeBtnText'),
+       genBtn: document.getElementById('generateBtn'),
+       genSelect: document.getElementById('genTableSelect'),
+       helpSelect: document.getElementById('helpTableSelect'),
+       resArea: document.getElementById('resultsArea'),
+       resCont: document.getElementById('resultsContainer'),
+       txInd: document.getElementById('txIndicator'),
+       fragBar: document.getElementById('fragBar'),
+       mTime: document.getElementById('metricTime'),
+       mRows: document.getElementById('metricRows'),
+       mEff: document.getElementById('metricEfficiency'),
+       mFrag: document.getElementById('metricFragmentation'),
+       dispLimit: document.getElementById('displayLimit'),
+       optimizeBtn: document.getElementById('optimizeBtn')
+    };
+
+    // ============================================================================
+    // [Global API Server (Interceptor)]
+    // ============================================================================
+    let apiEnabled = false;
+    const toggleApiBtn = document.getElementById('toggleApiBtn');
+    const apiStatusDot = document.getElementById('apiStatusDot');
+    const apiStatusText = document.getElementById('apiStatusText');
+
+    toggleApiBtn.addEventListener('click', () => {
+        apiEnabled = !apiEnabled;
+        if (apiEnabled) {
+            apiStatusDot.className = "w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_#10b981] animate-pulse";
+            apiStatusText.textContent = "ON";
+            apiStatusText.className = "text-[10px] font-bold text-emerald-400 tracking-wider";
+            toggleApiBtn.classList.add('border-emerald-800/50', 'bg-emerald-950/40');
+        } else {
+            apiStatusDot.className = "w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_4px_#ef4444]";
+            apiStatusText.textContent = "OFF";
+            apiStatusText.className = "text-[10px] font-bold text-slate-400 tracking-wider";
+            toggleApiBtn.classList.remove('border-emerald-800/50', 'bg-emerald-950/40');
+        }
+    });
+
+    window.LuminaAPI = {
+      query: async function(requestBody) {
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            try {
+              const body = typeof requestBody === 'string' ? JSON.parse(requestBody) : requestBody;
+              if (!body || !body.query) {
+                resolve({ status: 400, response: { error: "JSONボディに 'query' フィールドが見つかりません。" } });
+                return;
+              }
+              const res = dbEngine.executeHolographicQuery(body.query);
+              if (res.error) resolve({ status: 400, response: res });
+              else {
+                renderTree();
+                updateFragUI(dbEngine.fragmentation);
+                resolve({ status: 200, response: res });
+              }
+            } catch(e) { resolve({ status: 400, response: { error: "無効なJSONフォーマットです。" } }); }
+          }, 50); 
+        });
+      }
+    };
+
+    const originalFetch = window.fetch;
+    window.fetch = async function() {
+        let [resource, config] = arguments;
+        if (typeof resource === 'string' && resource.endsWith('/api/v1/query') && config && config.method === 'POST') {
+            if (!apiEnabled) {
+                return new Response(JSON.stringify({ error: "API Server is currently OFF." }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+            }
+            try {
+                const body = JSON.parse(config.body);
+                const result = await window.LuminaAPI.query(body);
+                return new Response(JSON.stringify(result.response), { status: result.status, headers: { 'Content-Type': 'application/json' } });
+            } catch (e) {
+                return new Response(JSON.stringify({ error: "Invalid Request payload" }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+            }
+        }
+        return originalFetch.apply(this, arguments);
+    };
+
+    window.addEventListener('message', async (event) => {
+        if (!apiEnabled) return;
+        const data = event.data;
+        if (data && data.type === 'LUMINA_API_REQUEST') {
+            const result = await window.LuminaAPI.query(data.payload);
+            event.source.postMessage({ type: 'LUMINA_API_RESPONSE', id: data.id, status: result.status, response: result.response }, event.origin);
+        }
+    });
+
+    const keywords = ['SELECT', 'FROM', 'WHERE', 'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE', 'DROP', 'TRUNCATE', 'OPTIMIZE', 'VACUUM', 'COUNT', 'SUM', 'AVG', 'BEGIN', 'COMMIT', 'ROLLBACK', 'JOIN', 'ON', 'INNER', 'LEFT', 'ORDER', 'BY', 'DESC', 'ASC', 'HAVING', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'AS', 'AND', 'OR', 'IN', 'GROUP', 'LIMIT', 'OFFSET', 'LIKE', 'NOT', 'IS', 'NULL', 'BETWEEN'];
+    function updateHighlight() {
+      let text = elements.query.value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      text = text.replace(/('[^']*')|("[^"]*")/g, '<span class="hl-string">$1$2</span>');
+      text = text.replace(/\b(\d+(\.\d+)?)\b/g, '<span class="hl-number">$1</span>');
+      text = text.replace(new RegExp(`\\b(${keywords.join('|')})\\b`, 'gi'), '<span class="hl-keyword">$&</span>');
+      if(text[text.length-1] === '\n') text += ' ';
+      elements.hl.innerHTML = text;
+    }
+
+    let undoStack = [];
+    let redoStack = [];
+    let saveTimeout;
+
+    function saveQueryState() {
+        const val = elements.query.value;
+        if (undoStack.length === 0 || undoStack[undoStack.length - 1] !== val) {
+            undoStack.push(val);
+            redoStack = [];
+        }
+    }
+
+    function setQueryValue(val) {
+        elements.query.value = val;
+        updateHighlight();
+        saveQueryState();
+    }
+
+    saveQueryState();
+    updateHighlight(); 
+
+    elements.query.addEventListener('input', (e) => {
+        updateHighlight();
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(saveQueryState, 400); 
+    });
+
+    elements.query.addEventListener('scroll', () => { elements.hl.scrollTop = elements.query.scrollTop; elements.hl.scrollLeft = elements.query.scrollLeft; });
+
+    elements.query.addEventListener('keydown', (e) => {
+        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+        const cmdKey = isMac ? e.metaKey : e.ctrlKey;
+
+        if (e.key === 'Enter' && cmdKey) { 
+            e.preventDefault(); 
+            clearTimeout(saveTimeout);
+            saveQueryState(); 
+            executeQuery(); 
+            return;
+        }
+
+        if (cmdKey && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            clearTimeout(saveTimeout);
+            if (elements.query.value !== undoStack[undoStack.length - 1]) redoStack.push(elements.query.value);
+            else if (undoStack.length > 1) redoStack.push(undoStack.pop());
+            if (undoStack.length > 0) { elements.query.value = undoStack[undoStack.length - 1]; updateHighlight(); }
+        }
+
+        if ((cmdKey && e.key.toLowerCase() === 'y') || (cmdKey && e.key.toLowerCase() === 'z' && e.shiftKey)) {
+            e.preventDefault();
+            clearTimeout(saveTimeout);
+            if (redoStack.length > 0) {
+                const val = redoStack.pop();
+                undoStack.push(val);
+                elements.query.value = val;
+                updateHighlight();
+            }
+        }
+    });
+
+    const refCommandGroups = [
+      {
+        category: "Data Query (DQL) - Basic",
+        commands: [
+          { name: "Basic Select", template: "SELECT * FROM {table}", desc: "テーブルの全てのデータを取得します。" },
+          { name: "Condition (Where)", template: "SELECT id, name, status FROM {table} WHERE status = 'Active' OR age >= 30", desc: "条件（=, !=, <, >, <=, >=, AND, OR）を指定してデータを絞り込みます。" },
+          { name: "Pattern Match (Like)", template: "SELECT * FROM {table} WHERE name LIKE '%A%' AND name NOT LIKE '%B%'", desc: "部分一致（%）や任意の一文字（_）で文字列を検索します。" },
+          { name: "Range & Null", template: "SELECT * FROM {table} WHERE age BETWEEN 20 AND 30 AND status IS NOT NULL", desc: "範囲指定（BETWEEN）や値の存在（IS NULL / IS NOT NULL）を評価します。" },
+          { name: "Sort & Limit", template: "SELECT * FROM {table} ORDER BY age DESC LIMIT 5 OFFSET 2", desc: "並び替え（ASC/DESC）と取得範囲の制限（LIMIT/OFFSET）を行います。" }
+        ]
+      },
+      {
+        category: "Data Query (DQL) - Advanced",
+        commands: [
+          { name: "Aggregation (Group By)", template: "SELECT status, COUNT(*), AVG(age), SUM(age) FROM {table} GROUP BY status", desc: "特定の列でグループ化し、集計関数（COUNT, SUM, AVG）を適用します。" },
+          { name: "Post-Agg Filter (Having)", template: "SELECT status, COUNT(*) FROM {table} GROUP BY status HAVING COUNT(*) > 1", desc: "グループ化・集計後の結果に対してさらに条件で絞り込みます。" },
+          { name: "Dynamic Projection (Case)", template: "SELECT name, CASE WHEN age >= 30 THEN 'Senior' ELSE 'Junior' END AS age_group FROM {table}", desc: "条件分岐（CASE文）を使用して動的に値を生成し、別名（AS）を付けます。" },
+          { name: "Inner Join", template: "SELECT u.name, o.amount FROM users u JOIN orders o ON u.id = o.user_id", desc: "複数のテーブルをON条件で結合（内部結合）します。" },
+          { name: "Left Join", template: "SELECT u.name, o.amount FROM users u LEFT JOIN orders o ON u.id = o.user_id", desc: "左側のテーブルの全行と、一致する右側のテーブルの行を結合（外部結合）します。" },
+          { name: "Subquery (IN)", template: "SELECT * FROM {table} WHERE id IN (SELECT user_id FROM orders)", desc: "WHERE条件の中で別のクエリを実行し、その結果リスト（IN）を用いて絞り込みます。" },
+          { name: "Subquery (FROM)", template: "SELECT * FROM (SELECT id, name FROM {table} WHERE age > 25) AS sub", desc: "クエリの実行結果を一時的なテーブルとして扱い、さらに検索を行います。" }
+        ]
+      },
+      {
+        category: "Data Manipulation (DML)",
+        commands: [
+          { name: "Insert (Single)", template: "INSERT INTO {table} (id, name, age, status) VALUES (99, 'Neo', 35, 'Active')", desc: "テーブルに新しい行を1件追加します。" },
+          { name: "Insert (Bulk)", template: "INSERT INTO {table} (id, name, age) VALUES (101, 'Trinity', 30), (102, 'Morpheus', 45)", desc: "複数行のデータを一度に効率よく追加します。" },
+          { name: "Update (Basic)", template: "UPDATE {table} SET status = 'Inactive' WHERE age < 25", desc: "条件に一致する行のデータを新しい値に更新します。" },
+          { name: "Update (Dynamic)", template: "UPDATE {table} SET age = age + 1 WHERE status = 'Active'", desc: "現在の値を参照して動的な計算結果で更新します。" },
+          { name: "Delete", template: "DELETE FROM {table} WHERE id = 10", desc: "条件に一致するデータを完全に削除します。" }
+        ]
+      },
+      {
+        category: "Data Definition (DDL) & Utility",
+        commands: [
+          { name: "Create Table", template: "CREATE TABLE new_table (id, name, description)", desc: "新しいテーブルをメモリ上に作成します。" },
+          { name: "Drop Table", template: "DROP TABLE new_table", desc: "テーブルとそのデータをメモリから完全に消去します。" },
+          { name: "Truncate Table", template: "TRUNCATE TABLE {table}", desc: "テーブルの構造は残したまま、全データを一瞬でクリアします。" },
+          { name: "Vacuum / Optimize", template: "VACUUM", desc: "内部配列の断片化をリセットし、速度を最適化します。" }
+        ]
+      },
+      {
+        category: "Transaction Control (TCL)",
+        commands: [
+          { name: "Begin Transaction", template: "BEGIN", desc: "現在の状態のスナップショットを作成し、トランザクションを開始します。" },
+          { name: "Commit", template: "COMMIT", desc: "トランザクション中の変更を確定し、現在の状態を保存します。" },
+          { name: "Rollback", template: "ROLLBACK", desc: "トランザクション中の変更をすべて破棄し、BEGIN時の状態に巻き戻します。" }
+        ]
+      }
+    ];
+
+    function renderHelpCommands() {
+      const tbl = elements.helpSelect.value || 'users';
+      const container = document.getElementById('helpContent');
+      
+      container.innerHTML = refCommandGroups.map(group => `
+        <div class="mb-5 last:mb-0">
+          <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 px-1 border-b border-slate-800 pb-1 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            ${group.category}
+          </h3>
+          <div class="space-y-3">
+            ${group.commands.map(cmd => {
+              const query = cmd.template.replace(/\{table\}/g, tbl);
+              return `
+                <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 flex flex-col gap-2 hover:border-slate-700 transition-colors">
+                  <div class="flex justify-between items-center">
+                    <div class="font-semibold text-cyan-400 text-sm tracking-wider">${cmd.name}</div>
+                    <button class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1 rounded border border-slate-700 transition-colors copy-cmd-btn shadow-sm" data-query="${query.replace(/"/g, '&quot;')}">
+                      Use This
+                    </button>
+                  </div>
+                  <div class="text-[11px] text-slate-400">${cmd.desc}</div>
+                  <div class="font-mono text-xs text-slate-300 bg-slate-900 p-2 rounded-md overflow-x-auto border border-slate-800/50 whitespace-pre-wrap">${query}</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `).join('');
+
+      document.querySelectorAll('.copy-cmd-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          setQueryValue(e.currentTarget.dataset.query);
+          document.getElementById('helpModal').classList.add('hidden');
+          elements.query.focus();
+        });
+      });
+    }
+
+    elements.helpSelect.addEventListener('change', renderHelpCommands);
+
+    function renderTree() {
+      const tree = document.getElementById('tableTree');
+      tree.innerHTML = `<li class="text-xs text-slate-500 mb-1 mt-2">Tables</li>`;
+      
+      const currentGenSelectVal = elements.genSelect.value;
+      const currentHelpSelectVal = elements.helpSelect.value;
+      const currentCsvSelectVal = document.getElementById('csvTableSelect') ? document.getElementById('csvTableSelect').value : null;
+      
+      elements.genSelect.innerHTML = '';
+      elements.helpSelect.innerHTML = '';
+      if(document.getElementById('csvTableSelect')) document.getElementById('csvTableSelect').innerHTML = '';
+
+      Object.keys(dbEngine.storageSoA).forEach(tbl => {
+        if(tbl.startsWith('__tmp_')) return; // Hide temp tables
+        const li = document.createElement('li');
+        li.innerHTML = `<button class="table-link text-slate-400 hover:text-cyan-300 text-sm flex items-center gap-1.5 w-full text-left px-2 py-1 rounded hover:bg-slate-800" data-table="${tbl}"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="9" y1="9" x2="9" y2="21"></line><line x1="15" y1="9" x2="15" y2="21"></line></svg>${tbl} <span class="text-[9px] text-slate-600 ml-auto">${dbEngine.storageSoA[tbl][Object.keys(dbEngine.storageSoA[tbl])[0]]?.length || 0}</span></button>`;
+        tree.appendChild(li);
+
+        const optGen = document.createElement('option');
+        optGen.value = tbl; optGen.textContent = tbl;
+        elements.genSelect.appendChild(optGen);
+
+        const optHelp = document.createElement('option');
+        optHelp.value = tbl; optHelp.textContent = tbl;
+        elements.helpSelect.appendChild(optHelp);
+        
+        if(document.getElementById('csvTableSelect')){
+            const optCsv = document.createElement('option');
+            optCsv.value = tbl; optCsv.textContent = tbl;
+            document.getElementById('csvTableSelect').appendChild(optCsv);
+        }
+      });
+      
+      if (dbEngine.storageSoA[currentGenSelectVal] || (currentGenSelectVal && Object.keys(dbEngine.storageSoA).length > 0)) {
+         elements.genSelect.value = dbEngine.storageSoA[currentGenSelectVal] ? currentGenSelectVal : Object.keys(dbEngine.storageSoA)[0];
+      }
+      if (dbEngine.storageSoA[currentHelpSelectVal] || (currentHelpSelectVal && Object.keys(dbEngine.storageSoA).length > 0)) {
+         elements.helpSelect.value = dbEngine.storageSoA[currentHelpSelectVal] ? currentHelpSelectVal : Object.keys(dbEngine.storageSoA)[0];
+      }
+      if (document.getElementById('csvTableSelect') && (dbEngine.storageSoA[currentCsvSelectVal] || (currentCsvSelectVal && Object.keys(dbEngine.storageSoA).length > 0))) {
+         document.getElementById('csvTableSelect').value = dbEngine.storageSoA[currentCsvSelectVal] ? currentCsvSelectVal : Object.keys(dbEngine.storageSoA)[0];
+      }
+
+      document.querySelectorAll('.table-link').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          setQueryValue(`SELECT * FROM ${e.currentTarget.dataset.table}`);
+          elements.query.focus();
+        });
+      });
+      
+      renderHelpCommands();
+    }
+    renderTree();
+
+    function handlePhysicsUpdate() {
+      const c = Number(document.getElementById('connSpeed').value);
+      const d = Number(document.getElementById('dataDensity').value);
+      const s = Number(document.getElementById('securityStrictness').value);
+      dbEngine.updatePhysics(c, d, s);
+      document.getElementById('connSpeedVal').textContent = c === 0 ? "In-Process" : "TCP/Net";
+      document.getElementById('dataDensityVal').textContent = `${d}%`;
+      document.getElementById('securityStrictVal').textContent = s === 100 ? "Strict" : "Normal";
+      elements.mEff.textContent = `${(100 - (c * 0.5) + (d * 0.3)).toFixed(1)}%`;
+    }
+    ['connSpeed', 'dataDensity', 'securityStrictness'].forEach(id => {
+       document.getElementById(id).addEventListener('input', handlePhysicsUpdate);
+    });
+    handlePhysicsUpdate();
+
+    function updateFragUI(val) {
+       elements.mFrag.textContent = `${val}%`;
+       elements.fragBar.style.width = `${val}%`;
+       elements.fragBar.className = val > 50 ? "h-full bg-red-500 transition-all duration-500" : (val > 20 ? "h-full bg-amber-500 transition-all duration-500" : "h-full bg-emerald-500 transition-all duration-500");
+    }
+
+    document.getElementById('refreshDbBtn').addEventListener('click', () => {
+        renderTree();
+        updateFragUI(dbEngine.fragmentation);
+        elements.resArea.innerHTML = `<div class="m-auto text-cyan-400 font-mono text-sm">Database status refreshed.</div>`;
+    });
+
+    // --- CSV Import ---
+    document.getElementById('execCsvImportBtn').addEventListener('click', () => {
+        const fileInput = document.getElementById('csvFileInput');
+        const file = fileInput.files[0];
+        const tableName = document.getElementById('csvTableSelect').value;
+        
+        document.getElementById('csvModal').classList.add('hidden');
+
+        if (!file) {
+            elements.resArea.innerHTML = `<div class="m-auto text-amber-400 font-mono text-sm">CSVファイルが選択されていません。</div>`;
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const text = event.target.result;
+                const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+                if (lines.length < 2) throw new Error("CSVはヘッダー行と少なくとも1行のデータ行が必要です。");
+                
+                const parseLine = (line) => {
+                    let ret = [], inQuote = false, value = "";
+                    for (let i = 0; i < line.length; i++) {
+                        let char = line[i];
+                        if (inQuote) {
+                            if (char === '"') {
+                                if (i + 1 < line.length && line[i + 1] === '"') { value += '"'; i++; } 
+                                else { inQuote = false; }
+                            } else { value += char; }
+                        } else {
+                            if (char === '"') inQuote = true;
+                            else if (char === ',') { ret.push(value); value = ""; }
+                            else value += char;
+                        }
+                    }
+                    ret.push(value);
+                    return ret.map(v => v.trim());
+                };
+
+                const targetTable = dbEngine.storageSoA[tableName];
+                if (!targetTable) throw new Error(`テーブル '${tableName}' が存在しません。`);
+                
+                const tableCols = Object.keys(targetTable);
+                const colCount = tableCols.length;
+
+                const firstDataRow = parseLine(lines[1]);
+                if (firstDataRow.length !== colCount) {
+                    throw new Error(`列数が一致しません。対象テーブル(${tableName})は ${colCount} 列ですが、CSVデータは ${firstDataRow.length} 列です。`);
+                }
+
+                let importedCount = 0;
+                for (let i = 1; i < lines.length; i++) {
+                    const vals = parseLine(lines[i]);
+                    if(vals.length !== colCount && vals.join('') === '') continue;
+                    if(vals.length !== colCount) throw new Error(`${i+1}行目の列数が一致しません。`);
+                    
+                    tableCols.forEach((colName, idx) => {
+                        let v = vals[idx] !== undefined ? vals[idx] : null;
+                        if (v !== null && v !== '') {
+                            if (!isNaN(v) && !isNaN(parseFloat(v))) v = Number(v);
+                        } else if (v === '') {
+                            v = null;
+                        }
+                        targetTable[colName].push(v);
+                    });
+                    importedCount++;
+                }
+
+                dbEngine.fragmentation = Math.min(100, dbEngine.fragmentation + (importedCount * 0.005));
+
+                renderTree();
+                updateFragUI(dbEngine.fragmentation);
+                elements.resArea.innerHTML = `<div class="m-auto text-emerald-400 font-mono text-sm">テーブル '${tableName}' に ${importedCount} 行のデータをインポートしました。</div>`;
+                setQueryValue(`SELECT * FROM ${tableName}`);
+                
+            } catch(err) {
+                elements.resArea.innerHTML = `<div class="m-auto text-red-400 font-mono text-sm">インポート失敗: ${err.message}</div>`;
+            }
+        };
+        reader.readAsText(file);
+        fileInput.value = ''; 
+    });
+
+    document.getElementById('saveDbBtn').addEventListener('click', () => {
+        const dataStr = JSON.stringify(dbEngine.storageSoA, null, 2);
+        const blob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = "luminadb_export.json";
+        a.click();
+        URL.revokeObjectURL(url);
+    });
+
+    document.getElementById('loadDbInput').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+           try {
+              const importedData = JSON.parse(event.target.result);
+              if(typeof importedData === 'object' && importedData !== null) {
+                 dbEngine.storageSoA = importedData;
+                 dbEngine.fragmentation = 0.0;
+                 if(dbEngine.inTransaction) {
+                     dbEngine.inTransaction = false; dbEngine.snapshotSoA = null;
+                     document.body.classList.remove('tx-active'); elements.txInd.style.display = 'none';
+                 }
+                 renderTree(); updateFragUI(0.0);
+                 elements.resArea.innerHTML = `<div class="m-auto text-emerald-400 font-mono text-sm">Database imported successfully.</div>`;
+              }
+           } catch(err) { elements.resArea.innerHTML = `<div class="m-auto text-red-400 font-mono text-sm">Failed to parse JSON file.</div>`; }
+        };
+        reader.readAsText(file);
+        e.target.value = ''; 
+    });
+
+    // --- CSV Export (Observation Snapshot) ---
+    document.getElementById('exportCsvBtn').addEventListener('click', () => {
+        if (!currentResultData || currentResultData.length === 0) return;
+
+        const headers = Object.keys(currentResultData[0]);
+        const csvRows = [];
+        
+        // ヘッダー生成
+        csvRows.push(headers.map(h => `"${String(h).replace(/"/g, '""')}"`).join(','));
+        
+        // データ生成
+        for (const row of currentResultData) {
+            const values = headers.map(header => {
+                let val = row[header];
+                if (val === null || val === undefined) return '""';
+                return `"${String(val).replace(/"/g, '""')}"`;
+            });
+            csvRows.push(values.join(','));
+        }
+
+        // BOMを付与（Excel対策）
+        const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+        const blob = new Blob([bom, csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        a.download = `lumina_observation_${timestamp}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+
+    function renderDisplay() {
+       elements.resArea.innerHTML = '';
+       if (!currentResultData || currentResultData.length === 0) {
+          elements.resArea.innerHTML = `<div class="m-auto text-slate-500 text-sm">0 rows returned.</div>`;
+          return;
+       }
+
+       const limitVal = elements.dispLimit.value;
+       const limit = limitVal === 'all' ? currentResultData.length : parseInt(limitVal, 10);
+       const displayData = currentResultData.slice(0, limit);
+
+       const keys = Object.keys(currentResultData[0]);
+       let ths = `<tr>${keys.map(k => `<th class="px-4 py-3 font-medium border-r border-slate-700/50 last:border-0">${k}</th>`).join('')}</tr>`;
+       
+       let trs = displayData.map(row => {
+          let tds = Object.values(row).map(v => {
+             if(v==="Success"||v==="Active"||(typeof v==='string' && v.includes("injected"))) return `<td class="px-4 py-2 border-r border-slate-700/50 last:border-0 text-emerald-400">${v}</td>`;
+             if(typeof v==='number') return `<td class="px-4 py-2 border-r border-slate-700/50 last:border-0 text-purple-300">${v}</td>`;
+             if(v===null) return `<td class="px-4 py-2 border-r border-slate-700/50 last:border-0 text-slate-500 italic">null</td>`;
+             return `<td class="px-4 py-2 border-r border-slate-700/50 last:border-0 text-slate-300">${v}</td>`;
+          }).join('');
+          return `<tr class="hover:bg-slate-800/50 border-b border-slate-800/50 last:border-0">${tds}</tr>`;
+       }).join('');
+       
+       let note = currentResultData.length > limit ? `<div class="text-xs text-slate-500 p-2 text-center bg-slate-950">Showing top ${limit} rows out of ${currentResultData.length.toLocaleString()}.</div>` : '';
+
+       elements.resArea.innerHTML = `
+          <div class="rounded-lg border border-slate-800 overflow-hidden bg-slate-900 w-fit min-w-full shadow-lg relative z-10">
+            <table class="w-full text-left text-sm whitespace-nowrap">
+              <thead class="bg-slate-950 text-slate-400 text-xs uppercase border-b border-slate-700">${ths}</thead>
+              <tbody class="font-mono text-xs">${trs}</tbody>
+            </table>
+            ${note}
+          </div>
+       `;
+    }
+
+    elements.dispLimit.addEventListener('change', renderDisplay);
+
+    function executeQuery() {
+      if (elements.execBtn.disabled) return;
+      const sql = elements.query.value.trim();
+      if (!sql) return;
+      
+      elements.execBtn.disabled = true;
+      document.getElementById('exportCsvBtn').disabled = true;
+      elements.execText.innerHTML = '<span class="animate-pulse">Running...</span>';
+
+      setTimeout(() => {
+        const res = dbEngine.executeHolographicQuery(sql);
+        if (res.error) {
+          elements.resArea.innerHTML = `<div class="m-auto text-red-400 text-sm font-mono">${res.error}</div>`;
+        } else {
+          elements.mTime.textContent = `${res.executionTime} ms`;
+          elements.mRows.textContent = res.scannedRows.toLocaleString();
+          updateFragUI(res.fragmentation);
+          document.body.classList.toggle('tx-active', dbEngine.inTransaction);
+          elements.txInd.style.display = dbEngine.inTransaction ? 'block' : 'none';
+
+          currentResultData = res.data;
+          renderDisplay();
+          
+          // 観測結果（データ）か、操作メッセージ（DML/DDL）かを判定してCSVボタンの状態を制御
+          const isObservation = res.data && res.data.length > 0 && !res.data[0].Result;
+          document.getElementById('exportCsvBtn').disabled = !isObservation;
+          
+          if(res.data && res.data.length > 0 && !res.data[0].Result) {
+             const fx = document.createElement('div'); fx.className = 'particle-fx'; elements.resCont.appendChild(fx);
+             setTimeout(() => { if(fx.parentNode) fx.remove() }, 500);
+          }
+          
+          const hList = document.getElementById('historyList');
+          const li = document.createElement('li');
+          li.className = "text-xs p-2 rounded hover:bg-slate-800 cursor-pointer text-slate-300 font-mono truncate border border-transparent hover:border-slate-700";
+          li.textContent = sql;
+          li.onclick = () => { setQueryValue(sql); elements.query.focus(); };
+          hList.prepend(li);
+          renderTree(); 
+        }
+        elements.execBtn.disabled = false;
+        elements.execText.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg> Run`;
+      }, 50); 
+    }
+
+    elements.execBtn.addEventListener('click', () => { clearTimeout(saveTimeout); saveQueryState(); executeQuery(); });
+    
+    elements.genBtn.addEventListener('click', () => {
+       const tbl = elements.genSelect.value;
+       const cnt = dbEngine.generateDummyData(tbl);
+       renderTree(); updateFragUI(dbEngine.fragmentation);
+       elements.resArea.innerHTML = `<div class="m-auto text-emerald-400 font-mono text-sm">${cnt.toLocaleString()} rows injected.</div>`;
+       setQueryValue(`SELECT COUNT(*) FROM ${tbl}`);
+       document.getElementById('generatorModal').classList.add('hidden');
+    });
+
+    elements.optimizeBtn.addEventListener('click', () => { setQueryValue('VACUUM'); executeQuery(); });
+
+    document.getElementById('apiSendBtn').addEventListener('click', async () => {
+        const reqStr = document.getElementById('apiRequestInput').value;
+        const outPre = document.getElementById('apiResponseOutput');
+        const btn = document.getElementById('apiSendBtn');
+        btn.disabled = true; btn.innerHTML = `<span class="animate-pulse">Sending...</span>`;
+        outPre.textContent = "Processing..."; outPre.className = "bg-slate-950 border border-slate-800 text-slate-400 text-xs font-mono rounded-lg p-3 overflow-y-auto h-32 mt-2";
+
+        try {
+            const res = await fetch('/api/v1/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqStr });
+            const data = await res.json();
+            btn.disabled = false; btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Internal Fetch`;
+            outPre.textContent = JSON.stringify(data, null, 2);
+            outPre.className = res.ok ? "bg-slate-950 border border-emerald-800/50 text-emerald-400 text-xs font-mono rounded-lg p-3 overflow-y-auto h-32 mt-2 shadow-[inset_0_0_10px_rgba(16,185,129,0.1)]" : "bg-slate-950 border border-red-800/50 text-red-400 text-xs font-mono rounded-lg p-3 overflow-y-auto h-32 mt-2 shadow-[inset_0_0_10px_rgba(239,68,68,0.1)]";
+        } catch(e) {
+            btn.disabled = false; btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Internal Fetch`;
+            outPre.textContent = "Network Error: Failed to fetch (Is the API Server ON?)"; outPre.className = "bg-slate-950 border border-red-800/50 text-red-400 text-xs font-mono rounded-lg p-3 overflow-y-auto h-32 mt-2 shadow-[inset_0_0_10px_rgba(239,68,68,0.1)]";
+        }
+    });
+
+    document.getElementById('downloadNodeServerBtn').addEventListener('click', () => {
+      const engineCode = ZeroMassEngine.toString();
+      const currentData = JSON.stringify(dbEngine.storageSoA);
+      const serverCode = `const http = require('http');\n\n// --- LuminaDB Zero-Mass Engine ---\n${engineCode}\n\nconst dbEngine = new ZeroMassEngine();\ndbEngine.storageSoA = ${currentData};\n\nconst PORT = 8080;\nconst server = http.createServer((req, res) => {\n  res.setHeader('Access-Control-Allow-Origin', '*');\n  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');\n  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');\n\n  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }\n\n  if (req.method === 'POST' && req.url === '/api/v1/query') {\n    let body = '';\n    req.on('data', chunk => body += chunk.toString());\n    req.on('end', () => {\n      try {\n        const payload = JSON.parse(body);\n        if(!payload.query) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({error: "Missing 'query'"})); return; }\n        const result = dbEngine.executeHolographicQuery(payload.query);\n        res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });\n        res.end(JSON.stringify(result));\n      } catch(e) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({error: "Invalid JSON format."})); }\n    });\n  } else { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({error: "Endpoint not found."})); }\n});\n\nserver.listen(PORT, () => { console.log('\\n ✨ LuminaDB Server Active: http://localhost:'+PORT+'/api/v1/query\\n'); });`;
+      const blob = new Blob([serverCode], { type: "application/javascript" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = "luminadb_server.js"; a.click(); URL.revokeObjectURL(url);
+    });
+
+    const modals = [
+       { btn: 'openSettingsBtn', close: 'closeSettingsBtn', wrap: 'settingsModal', over: 'modalOverlay', apply: 'applySettingsBtn' },
+       { btn: 'explainBtn', close: 'closeExplainBtn', wrap: 'explainModal', over: 'explainOverlay' },
+       { btn: 'openHelpBtn', close: 'closeHelpBtn', wrap: 'helpModal', over: 'helpOverlay' },
+       { btn: 'openGeneratorBtn', close: 'closeGeneratorBtn', wrap: 'generatorModal', over: 'generatorOverlay' },
+       { btn: 'openApiBtn', close: 'closeApiBtn', wrap: 'apiModal', over: 'apiOverlay' },
+       { btn: 'openCsvBtn', close: 'closeCsvBtn', wrap: 'csvModal', over: 'csvOverlay' }
+    ];
+    modals.forEach(m => {
+       const toggle = () => {
+          if(m.btn === 'explainBtn' && document.getElementById(m.wrap).classList.contains('hidden')) {
+             const plan = dbEngine.explainQuery(elements.query.value);
+             document.getElementById('explainContent').innerHTML = plan.map(p => `
+                <div class="bg-slate-950 p-4 rounded-lg border border-slate-800 flex gap-4">
+                  <div class="w-8 h-8 rounded-full bg-slate-800 text-cyan-400 flex items-center justify-center shrink-0 font-bold">${p.step}</div>
+                  <div><div class="text-slate-200 font-semibold">${p.action}</div><div class="text-slate-500 text-xs mt-1">${p.detail}</div></div>
+                </div>`).join('');
+          }
+          document.getElementById(m.wrap).classList.toggle('hidden');
+       };
+       if(document.getElementById(m.btn)) document.getElementById(m.btn).addEventListener('click', toggle);
+       document.getElementById(m.close).addEventListener('click', toggle);
+       document.getElementById(m.over).addEventListener('click', toggle);
+       if(m.apply) document.getElementById(m.apply).addEventListener('click', toggle);
+    });
+
+    document.getElementById('clearBtn').addEventListener('click', () => { setQueryValue(''); elements.query.focus(); });
+
+  </script>
+</body>
+</html>
