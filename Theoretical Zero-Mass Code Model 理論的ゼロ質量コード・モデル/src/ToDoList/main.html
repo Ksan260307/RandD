@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>シンプルなToDoアプリ</title>
+  
+  <!-- 第10章: コンパイル時次元圧縮のアナロジー (Tailwind CSS CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- UIアイコン（Lucide） -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    /* 第1章: 真空チャンバー（モーダル）の背景ノイズ低減 */
+    dialog::backdrop {
+      background-color: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(4px);
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col items-center p-4 md:p-8">
+
+  <!-- 内部物理エンジンモニタ & システム設定: モーダルウィンドウ -->
+  <dialog id="engine-monitor" class="w-full max-w-lg bg-slate-900 rounded-xl p-0 text-slate-300 text-xs font-mono shadow-2xl border border-slate-700 open:animate-[fade-in_0.2s_ease-out]">
+    <div class="p-6">
+      <div class="flex justify-between items-center mb-5 border-b border-slate-800 pb-4">
+        <h2 class="text-slate-400 flex items-center gap-2 uppercase tracking-widest text-[11px] font-bold">
+          <i data-lucide="cpu" class="w-4 h-4 text-blue-500"></i> 
+          System Monitor & Control
+        </h2>
+        <form method="dialog">
+          <button class="text-slate-500 hover:text-white transition-colors p-1 bg-slate-800 hover:bg-slate-700 rounded-md" title="設定を閉じる">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </form>
+      </div>
+      
+      <!-- 物理エンジンステータス -->
+      <div class="grid grid-cols-2 gap-4 mb-6">
+        <div class="bg-slate-800/80 p-4 rounded-lg border border-slate-700/50">
+          <div class="text-slate-500 mb-1 flex items-center gap-1.5"><i data-lucide="database" class="w-3.5 h-3.5"></i>事象総数 (N)</div>
+          <div id="count-total" class="text-lg font-medium text-slate-200">0</div>
+        </div>
+        <div class="bg-slate-800/80 p-4 rounded-lg border border-slate-700/50">
+          <div class="text-slate-500 mb-1 flex items-center gap-1.5"><i data-lucide="zap" class="w-3.5 h-3.5"></i>波束収縮 (Obs)</div>
+          <div id="count-observed" class="text-lg font-medium text-slate-200">0</div>
+        </div>
+        <div class="bg-slate-800/80 p-4 rounded-lg border border-blue-900/30">
+          <div class="text-blue-500 mb-1 flex items-center gap-1.5"><i data-lucide="activity" class="w-3.5 h-3.5"></i>時空計量 (ds²)</div>
+          <div id="metric-ds" class="text-lg font-medium text-blue-300">1.000000</div>
+        </div>
+        <div class="bg-slate-800/80 p-4 rounded-lg border border-red-900/30">
+          <div class="text-red-500 mb-1 flex items-center gap-1.5"><i data-lucide="flame" class="w-3.5 h-3.5"></i>熱放射 (ΔS)</div>
+          <div id="entropy-display" class="text-lg font-medium text-red-300">0.00 e-23 J/K</div>
+        </div>
+      </div>
+
+      <!-- データエクスポート/インポート機能 -->
+      <div class="border-t border-slate-800 pt-5">
+        <h3 class="text-slate-400 mb-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider">
+          <i data-lucide="hard-drive" class="w-3.5 h-3.5"></i> Local Data Management
+        </h3>
+        <p class="text-slate-500 mb-4 leading-relaxed">
+          事象（タスク）の状態をJSON形式でローカルに保存・復元します。別デバイスへの移行やバックアップに利用してください。
+        </p>
+        <div class="flex gap-3">
+          <button onclick="exportData()" class="flex-1 bg-slate-800 hover:bg-blue-900/40 text-slate-300 hover:text-blue-300 py-2.5 rounded-md transition-colors flex items-center justify-center gap-2 border border-slate-700 hover:border-blue-800/50 shadow-sm active:scale-95">
+            <i data-lucide="download" class="w-4 h-4"></i> エクスポート
+          </button>
+          <button onclick="document.getElementById('import-file').click()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2.5 rounded-md transition-colors flex items-center justify-center gap-2 border border-slate-700 hover:border-slate-500 shadow-sm active:scale-95">
+            <i data-lucide="upload" class="w-4 h-4"></i> インポート
+          </button>
+          <input type="file" id="import-file" class="hidden" accept=".json" onchange="importData(event)">
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- メインUI: ユーザーフレンドリーなホログラム表面 -->
+  <main class="w-full max-w-xl bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8">
+    
+    <!-- ヘッダー -->
+    <div class="p-6 border-b border-slate-100 bg-white flex justify-between items-start">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-800 flex items-center gap-2">
+          <i data-lucide="check-square" class="text-blue-500 w-6 h-6"></i>
+          マイタスク
+        </h1>
+        <p class="text-sm text-slate-500 mt-1">やるべきことを管理しましょう</p>
+      </div>
+      <!-- システム・設定モニタ呼び出しボタン（歯車アイコンへ変更） -->
+      <button onclick="document.getElementById('engine-monitor').showModal()" class="text-slate-400 hover:text-slate-700 transition-colors p-2.5 bg-slate-50 rounded-lg border border-slate-100 hover:border-slate-300 shadow-sm active:scale-95" title="システム・設定を開く">
+        <i data-lucide="settings" class="w-5 h-5"></i>
+      </button>
+    </div>
+    
+    <!-- 第2章: 単一光円錐への封じ込めインターフェース (Add Todo) -->
+    <form id="todo-form" class="p-5 border-b border-slate-100 flex gap-2 bg-slate-50">
+      <input
+        type="text"
+        id="todo-input"
+        placeholder="新しいタスクを入力..."
+        class="flex-1 bg-white border border-slate-300 text-slate-800 px-4 py-2.5 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all placeholder:text-slate-400 shadow-sm"
+      />
+      <button 
+        type="submit"
+        class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors flex items-center gap-2 shadow-sm active:scale-95 shrink-0"
+      >
+        <i data-lucide="plus" class="w-4 h-4"></i><span class="hidden sm:inline">追加</span>
+      </button>
+    </form>
+
+    <!-- フィルタリング & 検索 & 一括操作ツールバー -->
+    <div class="px-5 py-3 border-b border-slate-100 bg-white flex flex-wrap justify-between items-center gap-3 text-sm">
+      <div id="filter-controls" class="flex gap-3 sm:gap-4">
+        <button onclick="observeMultiverse('all')" class="filter-btn font-semibold text-blue-600 transition-colors" data-filter="all">すべて</button>
+        <button onclick="observeMultiverse('active')" class="filter-btn text-slate-500 hover:text-slate-800 transition-colors" data-filter="active">未完了</button>
+        <button onclick="observeMultiverse('completed')" class="filter-btn text-slate-500 hover:text-slate-800 transition-colors" data-filter="completed">完了済み</button>
+      </div>
+
+      <div class="flex items-center gap-3 w-full sm:w-auto mt-2 sm:mt-0">
+        <!-- 検索入力（事象の干渉縞パターンの抽出） -->
+        <div class="flex-1 sm:flex-none sm:w-[160px] relative">
+          <i data-lucide="search" class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"></i>
+          <input 
+            type="text" 
+            oninput="interferePattern(this.value)"
+            placeholder="タスクを検索..." 
+            class="w-full bg-slate-50 border border-slate-200 text-slate-700 pl-8 pr-3 py-1.5 rounded-md focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200 transition-all text-xs shadow-inner"
+          >
+        </div>
+
+        <button onclick="massHawkingRadiation()" class="text-slate-400 hover:text-red-500 transition-colors text-xs flex items-center gap-1.5 shrink-0" title="完了済みをすべて削除">
+          <i data-lucide="trash" class="w-3.5 h-3.5"></i> <span class="hidden sm:inline">完了をクリア</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 第10章: ホログラフィック原理に基づく次元圧縮UI (Todo List) -->
+    <div id="todo-list" class="divide-y divide-slate-100 max-h-[60vh] overflow-y-auto">
+      <!-- JavaScriptによって事象がレンダリングされます -->
+    </div>
+  </main>
+
+  <script>
+    // 第12章: アーキテクチャの微細構造定数
+    const FINE_STRUCTURE_CONSTANT = 0.00729735256;
+
+    // 第1章: 実行環境の「真空化」と局所的真空チャンバー
+    let events = [];
+    let entropy = 0;
+    
+    // 観測路（フィルター）と検索（干渉縞）の状態管理
+    let currentUniverseBranch = 'all';
+    let currentSearchQuery = '';
+
+    // DOM要素の参照
+    const form = document.getElementById('todo-form');
+    const input = document.getElementById('todo-input');
+    const listContainer = document.getElementById('todo-list');
+    const countTotal = document.getElementById('count-total');
+    const countObserved = document.getElementById('count-observed');
+    const metricDs = document.getElementById('metric-ds');
+    const entropyDisplay = document.getElementById('entropy-display');
+
+    // 第2章: 単一光円錐への封じ込め (Add Todo)
+    function confineToLightCone(e) {
+      e.preventDefault();
+      const newEventDefinition = input.value.trim();
+      if (!newEventDefinition) return;
+
+      const newEvent = {
+        id: performance.now(),
+        mass: 0,
+        description: newEventDefinition,
+        isObserved: false 
+      };
+
+      events.push(newEvent);
+      input.value = "";
+      
+      if (currentUniverseBranch === 'completed') currentUniverseBranch = 'all';
+      render();
+    }
+
+    // 第11章: 量子力学的観測問題と波束の収縮 (Toggle Todo)
+    window.collapseWaveFunction = function(id) {
+      events = events.map(ev => 
+        ev.id === id ? { ...ev, isObserved: !ev.isObserved } : ev
+      );
+      render();
+    }
+
+    // 第3章: ベッケンシュタイン境界からの除外 (Delete Todo)
+    window.castToEventHorizon = function(id) {
+      events = events.filter(ev => ev.id !== id);
+      entropy += 1.38; // 削除に伴う熱放射
+      render();
+    }
+
+    // 逆因果による事象の再定義 (Edit Todo)
+    window.retrocausalEdit = function(id) {
+      const event = events.find(ev => ev.id === id);
+      if (!event) return;
+      
+      const newDefinition = prompt("事象の再定義（タスクの編集）:", event.description);
+      if (newDefinition !== null && newDefinition.trim() !== "") {
+        event.description = newDefinition.trim();
+        entropy += 0.5; // 情報の書き換えに伴う微小な熱放射
+        render();
+      }
+    }
+
+    // 多世界解釈に基づく観測路の選択 (Filter)
+    window.observeMultiverse = function(branch) {
+      currentUniverseBranch = branch;
+      render();
+    }
+
+    // パターンの干渉による事象の抽出 (Search)
+    window.interferePattern = function(query) {
+      currentSearchQuery = query.toLowerCase();
+      render();
+    }
+
+    // ブラックホールへの一括投棄 (Clear Completed)
+    window.massHawkingRadiation = function() {
+      const observedEvents = events.filter(ev => ev.isObserved);
+      if (observedEvents.length === 0) return;
+      
+      if (confirm(`完了済みの事象（${observedEvents.length}件）をブラックホールへ一括投棄しますか？`)) {
+        events = events.filter(ev => !ev.isObserved);
+        entropy += observedEvents.length * 1.38; // ホーキング放射による一括エントロピー増大
+        render();
+      }
+    }
+
+    // 【新規】波動関数のスナップショット抽出 (Export Data)
+    window.exportData = function() {
+      const data = {
+        version: "1.0-zero-mass",
+        timestamp: Date.now(),
+        entropy: entropy,
+        events: events
+      };
+      
+      const jsonStr = JSON.stringify(data, null, 2);
+      const blob = new Blob([jsonStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `todo_backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // 【新規】別宇宙からの事象の注入 (Import Data)
+    window.importData = function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        try {
+          const data = JSON.parse(event.target.result);
+          if (data.events && Array.isArray(data.events)) {
+            // 事象の上書きと時間の再構築
+            events = data.events;
+            entropy = typeof data.entropy === 'number' ? data.entropy : 0;
+            render();
+            alert("事象の注入（インポート）に成功しました。");
+          } else {
+            alert("ファイルの形式が不正です。");
+          }
+        } catch (err) {
+          alert("JSONファイルの読み込みに失敗しました。");
+        }
+        // 同じファイルを選択し直せるようにクリア
+        e.target.value = '';
+      };
+      reader.readAsText(file);
+    }
+
+    // XSS対策
+    function escapeHtml(unsafe) {
+      return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // ホログラムの再構築（描画）
+    function render() {
+      // 物理エンジン計量
+      const observedCount = events.filter(e => e.isObserved).length;
+      const dsSquared = Math.max(0, 1 - (observedCount * FINE_STRUCTURE_CONSTANT));
+
+      countTotal.textContent = events.length;
+      countObserved.textContent = observedCount;
+      metricDs.textContent = dsSquared.toFixed(6);
+      entropyDisplay.textContent = entropy.toFixed(2) + ' e-23 J/K';
+
+      // フィルターUIのアクティブ状態更新
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        if (btn.dataset.filter === currentUniverseBranch) {
+          btn.classList.add('text-blue-600', 'font-semibold');
+          btn.classList.remove('text-slate-500');
+        } else {
+          btn.classList.remove('text-blue-600', 'font-semibold');
+          btn.classList.add('text-slate-500');
+        }
+      });
+
+      // 世界線のフィルタリングと検索語句による絞り込み
+      let visibleEvents = events;
+      if (currentUniverseBranch === 'active') visibleEvents = events.filter(e => !e.isObserved);
+      if (currentUniverseBranch === 'completed') visibleEvents = events.filter(e => e.isObserved);
+      
+      if (currentSearchQuery !== '') {
+        visibleEvents = visibleEvents.filter(e => e.description.toLowerCase().includes(currentSearchQuery));
+      }
+
+      // UIの構築
+      if (visibleEvents.length === 0) {
+        let msg = "タスクはありません。<br>快適な時間をお過ごしください。";
+        if (currentSearchQuery !== '') msg = "検索条件に一致するタスクが見つかりません。";
+        else if (currentUniverseBranch === 'active' && events.length > 0) msg = "未完了のタスクはありません。<br>素晴らしい進捗です！";
+        else if (currentUniverseBranch === 'completed' && events.length > 0) msg = "完了済みのタスクはまだありません。";
+
+        listContainer.innerHTML = `
+          <div class="text-center p-12 text-slate-400 flex flex-col items-center justify-center">
+            <i data-lucide="coffee" class="w-10 h-10 mb-4 text-slate-300"></i>
+            <p class="text-sm leading-relaxed">${msg}</p>
+          </div>
+        `;
+      } else {
+        listContainer.innerHTML = visibleEvents.map(event => `
+          <div class="group flex items-center gap-3 p-4 hover:bg-slate-50 transition-colors">
+            <button 
+              onclick="collapseWaveFunction(${event.id})"
+              class="flex-shrink-0 transition-colors ${
+                event.isObserved ? 'text-blue-500' : 'text-slate-300 hover:text-blue-400'
+              }"
+              title="完了にする"
+            >
+              <i data-lucide="${event.isObserved ? 'check-circle' : 'circle'}" class="w-6 h-6"></i>
+            </button>
+            <span 
+              ondblclick="retrocausalEdit(${event.id})"
+              class="flex-1 text-slate-700 transition-all cursor-text select-none sm:select-auto ${event.isObserved ? 'line-through text-slate-400' : ''}"
+              title="ダブルクリックで編集"
+            >
+              ${escapeHtml(event.description)}
+            </span>
+            
+            <div class="flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+              <button 
+                onclick="retrocausalEdit(${event.id})"
+                class="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-md transition-colors"
+                title="編集する"
+              >
+                <i data-lucide="edit-2" class="w-[18px] h-[18px]"></i>
+              </button>
+              <button 
+                onclick="castToEventHorizon(${event.id})"
+                class="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                title="削除する"
+              >
+                <i data-lucide="trash-2" class="w-[18px] h-[18px]"></i>
+              </button>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      lucide.createIcons();
+    }
+
+    form.addEventListener('submit', confineToLightCone);
+    render();
+  </script>
+</body>
+</html>
