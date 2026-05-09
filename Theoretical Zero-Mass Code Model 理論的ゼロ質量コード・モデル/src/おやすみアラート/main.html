@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>おやすみアラート</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 第3章：ベッケンシュタイン境界とキャッシュ情報密度の限界 */
+        body {
+            transition: background-color 1s ease, background-image 2s ease, color 0.5s ease;
+        }
+        
+        /* 相転移アニメーション（警告） */
+        .pulse-bg {
+            animation: pulse-red 2s infinite;
+            background-color: #450a0a;
+        }
+        @keyframes pulse-red {
+            0% { background-color: #450a0a; } 
+            50% { background-color: #7f1d1d; } 
+            100% { background-color: #450a0a; }
+        }
+
+        /* 事象の地平面接近（星空エフェクト） */
+        .starry-sky {
+            background-color: #0f172a; 
+            background-image: 
+                radial-gradient(white, rgba(255,255,255,.2) 2px, transparent 4px),
+                radial-gradient(white, rgba(255,255,255,.15) 1px, transparent 3px),
+                radial-gradient(white, rgba(255,255,255,.1) 2px, transparent 4px);
+            background-size: 550px 550px, 350px 350px, 250px 250px;
+            background-position: 0 0, 40px 60px, 130px 270px;
+        }
+
+        /* 波束の収縮（完全消灯） */
+        .sleeping-bg {
+            background-color: #000000;
+            background-image: none;
+        }
+        .sleeping-text {
+            color: #1f2937; /* Tailwind gray-800: かろうじて見える程度 */
+        }
+        
+        /* 隠し要素の滑らかなトランジション */
+        .fade-transition {
+            transition: opacity 0.5s ease-in-out, transform 0.5s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 flex flex-col items-center justify-center min-h-screen font-sans selection:bg-blue-500 selection:text-white" id="spacetime-continuum">
+
+    <main class="text-center p-6 w-full max-w-lg mx-auto flex flex-col items-center justify-center min-h-screen relative">
+        
+        <!-- 時刻表示エリア -->
+        <div class="space-y-2 mb-8 z-10">
+            <h1 class="text-xl md:text-2xl text-gray-400 font-medium tracking-widest transition-colors duration-500" id="status-label">現在の時刻</h1>
+            <div class="text-6xl md:text-8xl font-black tracking-tight tabular-nums transition-colors duration-500" id="time-display">
+                --:--:--
+            </div>
+            <p id="sub-message" class="text-lg md:text-xl font-medium text-indigo-300 h-8 mt-2 opacity-0 fade-transition"></p>
+        </div>
+
+        <!-- メッセージ表示エリア -->
+        <div id="message-container" class="opacity-0 scale-95 fade-transition h-24 flex items-center justify-center z-10">
+            <p id="main-message" class="text-5xl md:text-7xl font-extrabold text-red-500 tracking-wider drop-shadow-lg">
+                はやくねろ
+            </p>
+        </div>
+
+        <!-- アクションボタンエリア（警告時のみ表示） -->
+        <div id="action-container" class="opacity-0 scale-95 pointer-events-none fade-transition mt-8 flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 z-10">
+            <button id="btn-snooze" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition-transform transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 focus:ring-offset-gray-900">
+                あと15分... (<span id="snooze-count-display">0</span>/3)
+            </button>
+            <button id="btn-sleep" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-xl shadow-lg transition-transform transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-900 flex items-center justify-center">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+                寝る
+            </button>
+        </div>
+
+        <!-- 設定・記録エリア -->
+        <div id="settings-container" class="absolute bottom-6 w-full px-6 flex flex-col items-center space-y-6 fade-transition z-10">
+            <!-- 前回の睡眠情報 -->
+            <p id="last-sleep-info" class="text-sm text-green-400 font-medium h-4"></p>
+
+            <div class="flex flex-col sm:flex-row items-center justify-between w-full max-w-sm space-y-4 sm:space-y-0 border-t border-gray-700 pt-4">
+                <!-- 通知設定 -->
+                <div class="flex flex-col items-center sm:items-start">
+                    <button id="notify-btn" class="text-xs bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded shadow transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        通知を許可
+                    </button>
+                    <p class="text-[10px] text-gray-500 mt-1" id="notification-status">未設定</p>
+                </div>
+
+                <!-- 記録I/O (インポート/エクスポート) -->
+                <div class="flex space-x-2">
+                    <button id="btn-export" class="text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 py-2 px-3 rounded shadow transition-colors" title="記録をJSONで保存">
+                        エクスポート
+                    </button>
+                    <label class="text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 py-2 px-3 rounded shadow transition-colors cursor-pointer" title="JSONから記録を読み込み">
+                        インポート
+                        <input type="file" id="file-import" accept=".json" class="hidden">
+                    </label>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        /**
+         * 内部ロジック：Theoretical Zero-Mass Code Model v2.0
+         * 状態空間の拡張（スヌーズ、睡眠打刻、I/O）と熱的平衡化（環境音）の統合
+         */
+
+        // 第2章：単一光円錐への封じ込め (拡張された状態管理)
+        const localLightCone = {
+            currentTimeString: "",
+            currentPhase: "NORMAL", // 'NORMAL' | 'APPROACHING_HORIZON' | 'WARNING' | 'SNOOZED' | 'SLEEPING'
+            
+            // 時間的特異点の遅延（スヌーズ）
+            snoozeUntil: null,
+            snoozeCount: 0,
+            
+            // 波束の収縮（睡眠）
+            isSleeping: false,
+            sleepRecords: [],
+            lastSleepMessage: "",
+
+            // 因果律とシステム権限
+            notificationGranted: false,
+            lastNotifiedDay: null
+        };
+
+        // 第3章：DOMキャッシュ
+        const DOM = {
+            body: document.getElementById('spacetime-continuum'),
+            timeDisplay: document.getElementById('time-display'),
+            statusLabel: document.getElementById('status-label'),
+            subMessage: document.getElementById('sub-message'),
+            messageContainer: document.getElementById('message-container'),
+            actionContainer: document.getElementById('action-container'),
+            settingsContainer: document.getElementById('settings-container'),
+            notifyBtn: document.getElementById('notify-btn'),
+            notificationStatus: document.getElementById('notification-status'),
+            snoozeBtn: document.getElementById('btn-snooze'),
+            snoozeCountDisplay: document.getElementById('snooze-count-display'),
+            sleepBtn: document.getElementById('btn-sleep'),
+            lastSleepInfo: document.getElementById('last-sleep-info'),
+            exportBtn: document.getElementById('btn-export'),
+            importFile: document.getElementById('file-import')
+        };
+
+        // --- 熱的平衡化プロトコル（Web Audio APIによるホワイトノイズ生成） ---
+        let audioCtx;
+        let noiseNode;
+        let gainNode;
+
+        function initAudio() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function manageThermalEquilibrium(shouldPlay) {
+            if (shouldPlay) {
+                if (noiseNode) return; // 再生中
+                initAudio();
+                const bufferSize = audioCtx.sampleRate * 2;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                
+                // ピンクノイズに近い特性で雨/焚き火のような揺らぎを生成（質量ゼロのアセット）
+                let lastOut = 0;
+                for (let i = 0; i < bufferSize; i++) {
+                    let white = Math.random() * 2 - 1;
+                    data[i] = (lastOut + (0.02 * white)) / 1.02; 
+                    lastOut = data[i];
+                    data[i] *= 3.0; // 振幅調整
+                }
+
+                noiseNode = audioCtx.createBufferSource();
+                noiseNode.buffer = buffer;
+                noiseNode.loop = true;
+
+                gainNode = audioCtx.createGain();
+                gainNode.gain.value = 0.05; // 睡眠を妨げない微音
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = 800; // 高音を削り、こもった音に
+
+                noiseNode.connect(filter);
+                filter.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                noiseNode.start();
+            } else {
+                if (noiseNode) {
+                    noiseNode.stop();
+                    noiseNode.disconnect();
+                    noiseNode = null;
+                }
+            }
+        }
+        // -----------------------------------------------------------
+
+        // --- 世界線の永続化とI/O（LocalStorage / JSON） ---
+        function saveSpacetimeState() {
+            const data = {
+                sleepRecords: localLightCone.sleepRecords,
+                isSleeping: localLightCone.isSleeping,
+                snoozeUntil: localLightCone.snoozeUntil,
+                snoozeCount: localLightCone.snoozeCount,
+                lastNotifiedDay: localLightCone.lastNotifiedDay,
+                lastSleepMessage: localLightCone.lastSleepMessage
+            };
+            localStorage.setItem('spacetime-records', JSON.stringify(data));
+        }
+
+        function loadSpacetimeState() {
+            const savedData = localStorage.getItem('spacetime-records');
+            if (savedData) {
+                try {
+                    const parsed = JSON.parse(savedData);
+                    localLightCone.sleepRecords = parsed.sleepRecords || [];
+                    localLightCone.isSleeping = parsed.isSleeping || false;
+                    localLightCone.snoozeUntil = parsed.snoozeUntil || null;
+                    localLightCone.snoozeCount = parsed.snoozeCount || 0;
+                    localLightCone.lastNotifiedDay = parsed.lastNotifiedDay || null;
+                    localLightCone.lastSleepMessage = parsed.lastSleepMessage || "";
+                } catch(e) {
+                    console.error("世界線の復元に失敗しました", e);
+                }
+            }
+            localLightCone.notificationGranted = Notification.permission === 'granted';
+            updateNotificationUI(localLightCone.notificationGranted);
+        }
+
+        function handleExport() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(localLightCone.sleepRecords, null, 2));
+            const dlAnchorElem = document.createElement('a');
+            dlAnchorElem.setAttribute("href", dataStr);
+            dlAnchorElem.setAttribute("download", `sleep_records_${new Date().toISOString().split('T')[0]}.json`);
+            document.body.appendChild(dlAnchorElem);
+            dlAnchorElem.click();
+            document.body.removeChild(dlAnchorElem);
+        }
+
+        function handleImport(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+                    if (Array.isArray(importedData)) {
+                        localLightCone.sleepRecords = importedData;
+                        saveSpacetimeState();
+                        alert("過去の観測記録をインポートしました。");
+                    } else {
+                        alert("無効な世界線データです。");
+                    }
+                } catch(err) {
+                    alert("ファイルの読み込みに失敗しました。");
+                }
+            };
+            reader.readAsText(file);
+        }
+        // -----------------------------------------------------------
+
+        // 第10章：ホログラフィック原理によるUIの射影
+        function projectHologram(previousState, newState) {
+            // 時刻の更新
+            if (previousState.currentTimeString !== newState.currentTimeString) {
+                DOM.timeDisplay.textContent = newState.currentTimeString;
+            }
+
+            // 前回睡眠情報の表示
+            if (previousState.lastSleepMessage !== newState.lastSleepMessage) {
+                DOM.lastSleepInfo.textContent = newState.lastSleepMessage;
+            }
+
+            // スヌーズ回数の更新
+            if (previousState.snoozeCount !== newState.snoozeCount) {
+                DOM.snoozeCountDisplay.textContent = newState.snoozeCount;
+                if (newState.snoozeCount >= 3) {
+                    DOM.snoozeBtn.disabled = true;
+                    DOM.snoozeBtn.classList.replace('bg-orange-600', 'bg-gray-600');
+                    DOM.snoozeBtn.textContent = "スヌーズ限界";
+                }
+            }
+
+            // フェーズ（相）の遷移に伴うUIの再構築
+            if (previousState.currentPhase !== newState.currentPhase) {
+                const phase = newState.currentPhase;
+                
+                // クラスのリセット
+                DOM.body.className = "text-gray-100 flex flex-col items-center justify-center min-h-screen font-sans selection:bg-blue-500 selection:text-white transition-colors duration-1000";
+                DOM.messageContainer.classList.remove('opacity-100', 'scale-100');
+                DOM.messageContainer.classList.add('opacity-0', 'scale-95');
+                DOM.actionContainer.classList.remove('opacity-100', 'scale-100', 'pointer-events-auto');
+                DOM.actionContainer.classList.add('opacity-0', 'scale-95', 'pointer-events-none');
+                DOM.subMessage.classList.remove('opacity-100');
+                DOM.subMessage.classList.add('opacity-0');
+                DOM.settingsContainer.classList.remove('opacity-0', 'pointer-events-none');
+
+                DOM.timeDisplay.className = "text-6xl md:text-8xl font-black tracking-tight tabular-nums transition-colors duration-500";
+                DOM.statusLabel.className = "text-xl md:text-2xl font-medium tracking-widest transition-colors duration-500";
+
+                manageThermalEquilibrium(false); // 音の初期化
+
+                switch(phase) {
+                    case 'NORMAL':
+                        DOM.body.classList.add('bg-gray-900');
+                        DOM.statusLabel.textContent = "現在の時刻";
+                        DOM.statusLabel.classList.add('text-gray-400');
+                        DOM.timeDisplay.classList.add('text-gray-100');
+                        break;
+
+                    case 'APPROACHING_HORIZON': // 23:30〜
+                        DOM.body.classList.add('starry-sky');
+                        DOM.statusLabel.textContent = "もうすぐ寝る時間です";
+                        DOM.statusLabel.classList.add('text-indigo-300');
+                        DOM.timeDisplay.classList.add('text-white');
+                        DOM.subMessage.textContent = "就寝の準備を始めてください";
+                        DOM.subMessage.classList.remove('opacity-0');
+                        DOM.subMessage.classList.add('opacity-100');
+                        break;
+
+                    case 'WARNING': // 0:00〜
+                        DOM.body.classList.add('pulse-bg');
+                        DOM.statusLabel.textContent = "就寝時間を過ぎました";
+                        DOM.statusLabel.classList.add('text-red-400');
+                        DOM.timeDisplay.classList.add('text-white');
+                        
+                        DOM.messageContainer.classList.remove('opacity-0', 'scale-95');
+                        DOM.messageContainer.classList.add('opacity-100', 'scale-100');
+                        
+                        DOM.actionContainer.classList.remove('opacity-0', 'scale-95', 'pointer-events-none');
+                        DOM.actionContainer.classList.add('opacity-100', 'scale-100', 'pointer-events-auto');
+                        
+                        DOM.settingsContainer.classList.add('opacity-0', 'pointer-events-none'); // 設定を隠す
+                        
+                        manageThermalEquilibrium(true); // 熱的平衡化（環境音）開始
+                        break;
+
+                    case 'SNOOZED': // スヌーズ中
+                        DOM.body.classList.add('bg-orange-950');
+                        DOM.statusLabel.textContent = "スヌーズ中";
+                        DOM.statusLabel.classList.add('text-orange-400');
+                        DOM.timeDisplay.classList.add('text-orange-100');
+                        
+                        DOM.subMessage.textContent = "早く寝ましょう...";
+                        DOM.subMessage.classList.replace('text-indigo-300', 'text-orange-300');
+                        DOM.subMessage.classList.remove('opacity-0');
+                        DOM.subMessage.classList.add('opacity-100');
+                        
+                        // 寝るボタンだけ表示を残す
+                        DOM.actionContainer.classList.remove('opacity-0', 'scale-95', 'pointer-events-none');
+                        DOM.actionContainer.classList.add('opacity-100', 'scale-100', 'pointer-events-auto');
+                        DOM.snoozeBtn.style.display = 'none'; // スヌーズボタン非表示
+                        break;
+
+                    case 'SLEEPING': // 寝るボタン押下後
+                        DOM.body.classList.add('sleeping-bg');
+                        DOM.statusLabel.textContent = "おやすみ中";
+                        DOM.statusLabel.classList.add('text-gray-800');
+                        DOM.timeDisplay.classList.add('sleeping-text');
+                        DOM.settingsContainer.classList.add('opacity-0', 'pointer-events-none');
+                        break;
+                }
+            }
+        }
+
+        function updateNotificationUI(isGranted) {
+            if (isGranted) {
+                DOM.notificationStatus.textContent = "通知設定済";
+                DOM.notifyBtn.classList.replace('bg-blue-600', 'bg-gray-700');
+                DOM.notifyBtn.classList.replace('hover:bg-blue-700', 'hover:bg-gray-600');
+                DOM.notifyBtn.textContent = "通知オン";
+            } else if (Notification.permission === 'denied') {
+                DOM.notificationStatus.textContent = "ブラウザでブロックされています";
+                DOM.notifyBtn.style.display = 'none';
+            }
+        }
+
+        // 第7章：因果律の保護 (通知)
+        function triggerSystemNotification(currentDayIndex) {
+            if (localLightCone.notificationGranted && localLightCone.lastNotifiedDay !== currentDayIndex) {
+                new Notification("就寝時間です", {
+                    body: "夜0時を過ぎました。はやくねろ。",
+                    icon: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛌</text></svg>"
+                });
+                localLightCone.lastNotifiedDay = currentDayIndex;
+                saveSpacetimeState();
+            }
+        }
+
+        // 第4章：ミンコフスキー時空モデルに基づく時間進行観測
+        function observeSpacetimeContinuum() {
+            const now = new Date();
+            const hours = now.getHours();
+            const minutes = now.getMinutes();
+            const seconds = now.getSeconds();
+            const timestamp = now.getTime();
+            
+            const previousState = { ...localLightCone };
+
+            // 時間のフォーマット
+            localLightCone.currentTimeString = 
+                String(hours).padStart(2, '0') + ':' + 
+                String(minutes).padStart(2, '0') + ':' + 
+                String(seconds).padStart(2, '0');
+
+            // --- 位相（フェーズ）の決定ロジック ---
+            let newPhase = 'NORMAL';
+
+            if (localLightCone.isSleeping) {
+                // 朝5時〜11時の間に観測されたら「起床」とみなして世界線を再開
+                if (hours >= 5 && hours < 12) {
+                    localLightCone.isSleeping = false;
+                    localLightCone.snoozeCount = 0;
+                    localLightCone.snoozeUntil = null;
+                    
+                    const lastRecord = localLightCone.sleepRecords[localLightCone.sleepRecords.length - 1];
+                    if (lastRecord) {
+                        localLightCone.lastSleepMessage = `前回の就寝: ${lastRecord.date} ${lastRecord.time} に寝ました。`;
+                    }
+                    saveSpacetimeState();
+                    newPhase = 'NORMAL';
+                } else {
+                    newPhase = 'SLEEPING';
+                }
+            } else {
+                // 起きている状態の判定
+                if (hours >= 0 && hours < 5) {
+                    // 0時〜5時：警告タイム
+                    if (localLightCone.snoozeUntil && timestamp < localLightCone.snoozeUntil) {
+                        newPhase = 'SNOOZED';
+                    } else {
+                        newPhase = 'WARNING';
+                        
+                        // 通知の送信（1日1回）
+                        const currentDayIndex = now.getFullYear() * 1000 + Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+                        triggerSystemNotification(currentDayIndex);
+                    }
+                } else if (hours === 23 && minutes >= 30) {
+                    // 23:30〜：地平面への接近
+                    newPhase = 'APPROACHING_HORIZON';
+                } else {
+                    newPhase = 'NORMAL';
+                }
+            }
+
+            localLightCone.currentPhase = newPhase;
+
+            // ホログラムの再構築
+            projectHologram(previousState, localLightCone);
+
+            requestAnimationFrame(observeSpacetimeContinuum);
+        }
+
+        // 第8章：イベントリスナーの初期化と重力場からの脱出
+        function initializeSystem() {
+            loadSpacetimeState();
+
+            // 通知権限の取得
+            DOM.notifyBtn.addEventListener('click', () => {
+                initAudio(); // ユーザー操作を起点にAudioContextをアンロック
+                if (!("Notification" in window)) {
+                    alert("通知非対応です。"); return;
+                }
+                Notification.requestPermission().then(permission => {
+                    localLightCone.notificationGranted = (permission === "granted");
+                    updateNotificationUI(localLightCone.notificationGranted);
+                });
+            });
+
+            // スヌーズ機能（特異点の遅延）
+            DOM.snoozeBtn.addEventListener('click', () => {
+                if (localLightCone.snoozeCount < 3) {
+                    const previousState = { ...localLightCone };
+                    localLightCone.snoozeUntil = Date.now() + 15 * 60 * 1000; // 15分後
+                    localLightCone.snoozeCount++;
+                    saveSpacetimeState();
+                    // フェーズ再計算は次フレームのobserveSpacetimeContinuumで行われる
+                }
+            });
+
+            // 寝る機能（波束の収縮と記録）
+            DOM.sleepBtn.addEventListener('click', () => {
+                const now = new Date();
+                const record = {
+                    date: now.toLocaleDateString('ja-JP'),
+                    time: now.toLocaleTimeString('ja-JP', {hour: '2-digit', minute:'2-digit'}),
+                    timestamp: now.getTime()
+                };
+                localLightCone.sleepRecords.push(record);
+                localLightCone.isSleeping = true;
+                saveSpacetimeState();
+                DOM.snoozeBtn.style.display = ''; // スヌーズボタンの非表示状態をリセット用
+            });
+
+            // I/O イベント
+            DOM.exportBtn.addEventListener('click', handleExport);
+            DOM.importFile.addEventListener('change', handleImport);
+
+            // 初回のUI射影と時間ループの開始
+            projectHologram({}, localLightCone);
+            requestAnimationFrame(observeSpacetimeContinuum);
+        }
+
+        // システム起動
+        initializeSystem();
+
+    </script>
+</body>
+</html>
