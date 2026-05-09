@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Particle Performance Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f172a; color: #e2e8f0; font-family: sans-serif; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        /* 余白を極限まで削ぎ落としたUI */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- メインキャンバス (ミンコフスキー時空のメタファー) -->
+    <canvas id="simulationCanvas"></canvas>
+
+    <!-- UI表示切替ボタン -->
+    <button id="btnToggleUI" class="absolute top-4 right-4 z-20 glass-panel text-white p-3 rounded-full shadow-lg cursor-pointer pointer-events-auto hover:bg-slate-700 transition-colors text-xl">
+        👁️
+    </button>
+
+    <!-- ユーザーフレンドリーなUIコントロール -->
+    <div id="uiContainer" class="absolute top-2 left-2 flex flex-col gap-2 z-10 w-72 pointer-events-none transition-opacity duration-300">
+        
+        <!-- ステータスパネル -->
+        <div class="glass-panel rounded-lg p-3 pointer-events-auto shadow-lg">
+            <h1 class="text-sm font-bold text-white mb-2 tracking-wider">PERFORMANCE TEST</h1>
+            <div class="flex justify-between items-end mb-1">
+                <span class="text-xs text-slate-400">FPS</span>
+                <span id="fpsDisplay" class="text-2xl font-mono font-bold text-emerald-400">0</span>
+            </div>
+            <div class="flex justify-between items-end mb-1">
+                <span class="text-xs text-slate-400">演算時間 (ms)</span>
+                <span id="computeTimeDisplay" class="text-lg font-mono text-white">0.0</span>
+            </div>
+            <div class="flex justify-between items-end">
+                <span class="text-xs text-slate-400">パーティクル数</span>
+                <span id="particleCountDisplay" class="text-sm font-mono text-white">0</span>
+            </div>
+        </div>
+
+        <!-- コントロールパネル -->
+        <div class="glass-panel rounded-lg p-3 pointer-events-auto shadow-lg flex flex-col gap-3">
+            
+            <div>
+                <label class="text-xs font-semibold text-slate-300 block mb-1">動作モード</label>
+                <div class="flex bg-slate-800 rounded p-1 gap-1">
+                    <button id="btnNormal" class="flex-1 text-xs py-1.5 rounded transition-colors bg-blue-600 text-white font-bold">通常 (質量あり)</button>
+                    <button id="btnOptimized" class="flex-1 text-xs py-1.5 rounded transition-colors bg-transparent text-slate-400 hover:text-white">最適化 (質量ゼロ)</button>
+                </div>
+                <p id="modeDescription" class="text-[10px] text-slate-400 mt-1 leading-tight">オブジェクト指向と標準描画APIを使用します。メモリ負荷が高くなります。</p>
+            </div>
+
+            <div>
+                <label class="flex justify-between items-center text-xs font-semibold text-slate-300 mb-1">
+                    <span>パーティクル量</span>
+                    <input type="number" id="inputCount" min="1" value="50000" class="w-24 bg-slate-800 text-white text-right text-[11px] rounded px-1 py-1 border border-slate-600 focus:outline-none focus:border-blue-500 transition-colors" title="上限なしに設定可能">
+                </label>
+                <input type="range" id="sliderCount" min="1000" max="1000000" step="1000" value="50000" class="w-full accent-blue-500">
+                <p class="text-[9px] text-red-400 mt-0.5 text-right">※テキスト入力で上限なし（クラッシュ注意）</p>
+            </div>
+            
+            <!-- 追加機能 (4種) -->
+            <hr class="border-slate-700 my-1">
+            <div class="grid grid-cols-2 gap-2">
+                <button id="btnGravity" class="text-[10px] py-2 rounded transition-all bg-purple-600 text-white font-bold shadow-[0_0_10px_rgba(147,51,234,0.3)] select-none cursor-pointer">
+                    🌀 特異点(引力)
+                </button>
+                <button id="btnRepulsion" class="text-[10px] py-2 rounded transition-all bg-emerald-600 text-white font-bold shadow-[0_0_10px_rgba(5,150,105,0.3)] select-none cursor-pointer">
+                    🛡️ 反発場(斥力)
+                </button>
+                <button id="btnBang" class="text-[10px] py-2 rounded transition-all bg-amber-600 text-white font-bold shadow-[0_0_10px_rgba(245,158,11,0.3)] select-none cursor-pointer hover:bg-amber-500 active:bg-amber-800 active:scale-95">
+                    💥 ビッグバン
+                </button>
+                <button id="btnFreeze" class="text-[10px] py-2 rounded transition-all bg-cyan-600 text-white font-bold shadow-[0_0_10px_rgba(8,145,178,0.3)] select-none cursor-pointer hover:bg-cyan-500 active:bg-cyan-800 active:scale-95">
+                    ❄️ 絶対零度
+                </button>
+            </div>
+
+            <p class="text-[10px] text-slate-500 text-center mt-1">※画面ドラッグで視点移動</p>
+        </div>
+    </div>
+
+<script>
+/**
+ * THEORETICAL ZERO-MASS CODE MODEL IMPLEMENTATION
+ */
+
+const canvas = document.getElementById('simulationCanvas');
+const ctx = canvas.getContext('2d', { alpha: false }); // 最適化: アルファチャンネル無効化
+
+// UI Elements
+const uiContainer = document.getElementById('uiContainer');
+const btnToggleUI = document.getElementById('btnToggleUI');
+const fpsDisplay = document.getElementById('fpsDisplay');
+const computeTimeDisplay = document.getElementById('computeTimeDisplay');
+const particleCountDisplay = document.getElementById('particleCountDisplay');
+const btnNormal = document.getElementById('btnNormal');
+const btnOptimized = document.getElementById('btnOptimized');
+const modeDescription = document.getElementById('modeDescription');
+const sliderCount = document.getElementById('sliderCount');
+const inputCount = document.getElementById('inputCount');
+
+// Interaction Buttons
+const btnGravity = document.getElementById('btnGravity');
+const btnRepulsion = document.getElementById('btnRepulsion');
+const btnBang = document.getElementById('btnBang');
+const btnFreeze = document.getElementById('btnFreeze');
+
+// --- 第12章: 量子力学的観測問題と慣性系の崩壊回避 ---
+let camera = { x: 0, y: 0 };
+let isDragging = false;
+let lastMouse = { x: 0, y: 0 };
+
+// インタラクション用のポインターワールド座標
+let pointerWorldX = 0;
+let pointerWorldY = 0;
+let isGravityActive = false;
+let isRepulsionActive = false;
+
+// --- 物理限界（ハードウェア制約）の設定 ---
+let width = window.innerWidth;
+let height = window.innerHeight;
+let imageData = ctx.createImageData(width, height);
+let dataBuffer = new Uint32Array(imageData.data.buffer); // 第10章: 次元圧縮（1次元配列としてのVRAMアクセス）
+
+window.addEventListener('resize', () => {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+    imageData = ctx.createImageData(width, height);
+    dataBuffer = new Uint32Array(imageData.data.buffer);
+});
+canvas.width = width;
+canvas.height = height;
+
+// --- 第1章 & 第2章: 理論モデルの状態変数 ---
+let isZeroMassMode = false; // 真空チャンバー（最適化）フラグ
+let particleCount = parseInt(inputCount.value);
+
+// -- AoS (Array of Structures) 質量のあるデータ構造 --
+let massiveParticles = [];
+
+// -- SoA (Structure of Arrays) 質量ゼロのデータ構造 --
+let soa_x, soa_y, soa_vx, soa_vy, soa_color;
+
+/**
+ * マウス/タッチの画面座標を、仮想空間（ワールド）の座標に変換する
+ */
+function updatePointerWorld(clientX, clientY) {
+    pointerWorldX = clientX + camera.x - width / 2;
+    pointerWorldY = clientY + camera.y - height / 2;
+}
+
+/**
+ * パーティクルの初期化
+ */
+function initSimulation() {
+    particleCountDisplay.innerText = particleCount.toLocaleString();
+    
+    if (isZeroMassMode) {
+        soa_x = new Float32Array(particleCount);
+        soa_y = new Float32Array(particleCount);
+        soa_vx = new Float32Array(particleCount);
+        soa_vy = new Float32Array(particleCount);
+        soa_color = new Uint32Array(particleCount);
+
+        for (let i = 0; i < particleCount; i++) {
+            soa_x[i] = Math.random() * 2000 - 1000;
+            soa_y[i] = Math.random() * 2000 - 1000;
+            soa_vx[i] = (Math.random() - 0.5) * 2;
+            soa_vy[i] = (Math.random() - 0.5) * 2;
+            // ABGR format for little-endian Uint32Array
+            const r = Math.floor(100 + Math.random() * 155);
+            const g = Math.floor(150 + Math.random() * 105);
+            const b = 255;
+            soa_color[i] = (255 << 24) | (b << 16) | (g << 8) | r; 
+        }
+        massiveParticles = []; // ガベージコレクションに解放
+    } else {
+        massiveParticles = new Array(particleCount);
+        for (let i = 0; i < particleCount; i++) {
+            massiveParticles[i] = {
+                x: Math.random() * 2000 - 1000,
+                y: Math.random() * 2000 - 1000,
+                vx: (Math.random() - 0.5) * 2,
+                vy: (Math.random() - 0.5) * 2,
+                color: `rgb(${Math.floor(100+Math.random()*155)}, ${Math.floor(150+Math.random()*105)}, 255)`
+            };
+        }
+        soa_x = soa_y = soa_vx = soa_vy = soa_color = null; // 解放
+    }
+}
+
+/**
+ * 通常（質量あり）シミュレーション
+ */
+function runMassiveSimulation(deltaTime) {
+    ctx.fillStyle = '#0f172a'; // 背景クリア
+    ctx.fillRect(0, 0, width, height);
+
+    for (let i = 0; i < particleCount; i++) {
+        const p = massiveParticles[i];
+        
+        // 引力（特異点）の適用
+        if (isGravityActive) {
+            const dx = pointerWorldX - p.x;
+            const dy = pointerWorldY - p.y;
+            const distSq = dx * dx + dy * dy + 100;
+            const force = 300 / distSq; 
+            p.vx += dx * force;
+            p.vy += dy * force;
+            p.vx *= 0.98; // 密集しやすくする摩擦
+            p.vy *= 0.98;
+        }
+
+        // 斥力（反発場）の適用
+        if (isRepulsionActive) {
+            const dx = p.x - pointerWorldX; // 向きが逆
+            const dy = p.y - pointerWorldY;
+            const distSq = dx * dx + dy * dy + 100;
+            const force = 1000 / distSq; // 反発は強め
+            p.vx += dx * force;
+            p.vy += dy * force;
+        }
+
+        // 物理更新
+        p.x += p.vx;
+        p.y += p.vy;
+
+        // 境界反射
+        if (p.x > 1000 || p.x < -1000) { p.vx *= -1; p.x += p.vx; }
+        if (p.y > 1000 || p.y < -1000) { p.vy *= -1; p.y += p.vy; }
+
+        // 画面座標系への変換
+        const screenX = p.x - camera.x + width / 2;
+        const screenY = p.y - camera.y + height / 2;
+
+        // 描画
+        if (screenX >= 0 && screenX < width && screenY >= 0 && screenY < height) {
+            ctx.fillStyle = p.color;
+            ctx.fillRect(screenX, screenY, 2, 2);
+        }
+    }
+}
+
+/**
+ * 最適化（質量ゼロ）シミュレーション
+ */
+function runZeroMassSimulation(deltaTime) {
+    dataBuffer.fill(0xFF2A170F); // 背景色 #0f172a (ABGR形式)
+
+    const cx = -camera.x + width / 2;
+    const cy = -camera.y + height / 2;
+    const w = width;
+    const h = height;
+
+    const gravityOn = isGravityActive;
+    const repulsionOn = isRepulsionActive;
+    const targetX = pointerWorldX;
+    const targetY = pointerWorldY;
+
+    // 型付き配列の連続アクセス
+    for (let i = 0; i < particleCount; i++) {
+        let px = soa_x[i];
+        let py = soa_y[i];
+        let vx = soa_vx[i];
+        let vy = soa_vy[i];
+
+        // 引力
+        if (gravityOn) {
+            const dx = targetX - px;
+            const dy = targetY - py;
+            const distSq = dx * dx + dy * dy + 100;
+            const force = 300 / distSq;
+            vx += dx * force;
+            vy += dy * force;
+            vx *= 0.98;
+            vy *= 0.98;
+        }
+
+        // 斥力
+        if (repulsionOn) {
+            const dx = px - targetX;
+            const dy = py - targetY;
+            const distSq = dx * dx + dy * dy + 100;
+            const force = 1000 / distSq;
+            vx += dx * force;
+            vy += dy * force;
+        }
+
+        // 物理更新
+        px += vx;
+        py += vy;
+
+        // 境界反射
+        if (px > 1000 || px < -1000) { vx *= -1; px += vx; }
+        if (py > 1000 || py < -1000) { vy *= -1; py += vy; }
+
+        // 状態の保存
+        soa_x[i] = px;
+        soa_y[i] = py;
+        soa_vx[i] = vx;
+        soa_vy[i] = vy;
+
+        // 画面座標系への変換と描画（1次元配列への直接投影）
+        const screenX = (px + cx) | 0; 
+        const screenY = (py + cy) | 0;
+
+        if (screenX >= 0 && screenX < w && screenY >= 0 && screenY < h) {
+            const index = screenY * w + screenX;
+            dataBuffer[index] = soa_color[i];
+            if(screenX + 1 < w) dataBuffer[index + 1] = soa_color[i];
+        }
+    }
+    
+    ctx.putImageData(imageData, 0, 0);
+}
+
+// --- メインループ ---
+let lastTime = performance.now();
+let frameCount = 0;
+let lastFpsTime = lastTime;
+
+function animate(currentTime) {
+    const deltaTime = currentTime - lastTime;
+    lastTime = currentTime;
+
+    const computeStart = performance.now();
+
+    if (isZeroMassMode) {
+        runZeroMassSimulation(deltaTime);
+    } else {
+        runMassiveSimulation(deltaTime);
+    }
+
+    const computeEnd = performance.now();
+    const computeDuration = computeEnd - computeStart;
+
+    frameCount++;
+    if (currentTime - lastFpsTime >= 500) {
+        const fps = Math.round((frameCount * 1000) / (currentTime - lastFpsTime));
+        
+        fpsDisplay.innerText = fps;
+        fpsDisplay.className = `text-2xl font-mono font-bold ${fps >= 55 ? 'text-emerald-400' : fps >= 30 ? 'text-yellow-400' : 'text-red-500'}`;
+        computeTimeDisplay.innerText = computeDuration.toFixed(1);
+        
+        frameCount = 0;
+        lastFpsTime = currentTime;
+    }
+
+    requestAnimationFrame(animate);
+}
+
+// --- UIイベント ---
+
+// UI トグル
+let uiVisible = true;
+btnToggleUI.addEventListener('click', () => {
+    uiVisible = !uiVisible;
+    if (uiVisible) {
+        uiContainer.style.opacity = '1';
+        uiContainer.style.pointerEvents = 'none'; // 子要素はauto
+        Array.from(uiContainer.children).forEach(child => {
+            child.style.pointerEvents = 'auto';
+        });
+        btnToggleUI.innerText = '👁️';
+    } else {
+        uiContainer.style.opacity = '0';
+        uiContainer.style.pointerEvents = 'none';
+        Array.from(uiContainer.children).forEach(child => {
+            child.style.pointerEvents = 'none';
+        });
+        btnToggleUI.innerText = '🙈';
+    }
+});
+
+function setMode(optimized) {
+    isZeroMassMode = optimized;
+    if (optimized) {
+        btnOptimized.classList.replace('bg-transparent', 'bg-emerald-600');
+        btnOptimized.classList.replace('text-slate-400', 'text-white');
+        btnOptimized.classList.add('font-bold');
+        
+        btnNormal.classList.replace('bg-blue-600', 'bg-transparent');
+        btnNormal.classList.replace('text-white', 'text-slate-400');
+        btnNormal.classList.remove('font-bold');
+        
+        modeDescription.innerText = "メモリの連続配置とダイレクト描画を使用します。極限の速度を発揮します。";
+        modeDescription.classList.replace('text-slate-400', 'text-emerald-400');
+    } else {
+        btnNormal.classList.replace('bg-transparent', 'bg-blue-600');
+        btnNormal.classList.replace('text-slate-400', 'text-white');
+        btnNormal.classList.add('font-bold');
+        
+        btnOptimized.classList.replace('bg-emerald-600', 'bg-transparent');
+        btnOptimized.classList.replace('text-white', 'text-slate-400');
+        btnOptimized.classList.remove('font-bold');
+        
+        modeDescription.innerText = "オブジェクト指向と標準描画APIを使用します。メモリ負荷・描画負荷がかかります。";
+        modeDescription.classList.replace('text-emerald-400', 'text-slate-400');
+    }
+    initSimulation();
+}
+
+btnNormal.addEventListener('click', () => setMode(false));
+btnOptimized.addEventListener('click', () => setMode(true));
+
+// スライダーによる変更
+sliderCount.addEventListener('input', (e) => {
+    particleCount = parseInt(e.target.value);
+    inputCount.value = particleCount;
+    initSimulation();
+});
+
+// テキスト入力による変更（無限上限対応）
+inputCount.addEventListener('change', (e) => {
+    let val = parseInt(e.target.value);
+    if (isNaN(val) || val < 1) val = 1;
+    
+    particleCount = val;
+    inputCount.value = particleCount;
+    
+    // 入力値がスライダーの最大値を超えた場合、スライダーの最大値を拡張する
+    if (val > parseInt(sliderCount.max)) {
+        sliderCount.max = val;
+    }
+    sliderCount.value = particleCount;
+    
+    initSimulation();
+});
+
+// 重力（引力）イベント
+const startGravity = (e) => { e.preventDefault(); isGravityActive = true; btnGravity.classList.add('scale-95'); };
+const stopGravity = () => { isGravityActive = false; btnGravity.classList.remove('scale-95'); };
+btnGravity.addEventListener('mousedown', startGravity);
+btnGravity.addEventListener('touchstart', startGravity, {passive: false});
+window.addEventListener('mouseup', stopGravity);
+window.addEventListener('touchend', stopGravity);
+
+// 反発場（斥力）イベント
+const startRepulsion = (e) => { e.preventDefault(); isRepulsionActive = true; btnRepulsion.classList.add('scale-95'); };
+const stopRepulsion = () => { isRepulsionActive = false; btnRepulsion.classList.remove('scale-95'); };
+btnRepulsion.addEventListener('mousedown', startRepulsion);
+btnRepulsion.addEventListener('touchstart', startRepulsion, {passive: false});
+window.addEventListener('mouseup', stopRepulsion);
+window.addEventListener('touchend', stopRepulsion);
+
+// ビッグバン（爆発）イベント
+btnBang.addEventListener('click', () => {
+    if (isZeroMassMode) {
+        for (let i = 0; i < particleCount; i++) {
+            soa_x[i] = pointerWorldX;
+            soa_y[i] = pointerWorldY;
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 30 + 5;
+            soa_vx[i] = Math.cos(angle) * speed;
+            soa_vy[i] = Math.sin(angle) * speed;
+        }
+    } else {
+        for (let i = 0; i < particleCount; i++) {
+            const p = massiveParticles[i];
+            p.x = pointerWorldX;
+            p.y = pointerWorldY;
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 30 + 5;
+            p.vx = Math.cos(angle) * speed;
+            p.vy = Math.sin(angle) * speed;
+        }
+    }
+});
+
+// 絶対零度（凍結）イベント
+btnFreeze.addEventListener('click', () => {
+    if (isZeroMassMode) {
+        for (let i = 0; i < particleCount; i++) {
+            soa_vx[i] *= 0.01;
+            soa_vy[i] *= 0.01;
+        }
+    } else {
+        for (let i = 0; i < particleCount; i++) {
+            massiveParticles[i].vx *= 0.01;
+            massiveParticles[i].vy *= 0.01;
+        }
+    }
+});
+
+// カメラ操作とポインター追跡
+canvas.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    lastMouse.x = e.clientX;
+    lastMouse.y = e.clientY;
+    updatePointerWorld(e.clientX, e.clientY);
+});
+window.addEventListener('mousemove', (e) => {
+    updatePointerWorld(e.clientX, e.clientY);
+    if (!isDragging) return;
+    camera.x -= (e.clientX - lastMouse.x);
+    camera.y -= (e.clientY - lastMouse.y);
+    lastMouse.x = e.clientX;
+    lastMouse.y = e.clientY;
+    updatePointerWorld(e.clientX, e.clientY);
+});
+
+canvas.addEventListener('touchstart', (e) => {
+    isDragging = true;
+    lastMouse.x = e.touches[0].clientX;
+    lastMouse.y = e.touches[0].clientY;
+    updatePointerWorld(e.touches[0].clientX, e.touches[0].clientY);
+});
+window.addEventListener('touchmove', (e) => {
+    updatePointerWorld(e.touches[0].clientX, e.touches[0].clientY);
+    if (!isDragging) return;
+    camera.x -= (e.touches[0].clientX - lastMouse.x);
+    camera.y -= (e.touches[0].clientY - lastMouse.y);
+    lastMouse.x = e.touches[0].clientX;
+    lastMouse.y = e.touches[0].clientY;
+    updatePointerWorld(e.touches[0].clientX, e.touches[0].clientY);
+});
+
+// 初期化と起動
+initSimulation();
+requestAnimationFrame(animate);
+
+</script>
+</body>
+</html>
