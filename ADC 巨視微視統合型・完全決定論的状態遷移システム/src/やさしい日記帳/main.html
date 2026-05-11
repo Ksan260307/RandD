@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>やさしい日記帳</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500&family=Shippori+Mincho&display=swap');
+        
+        body {
+            /* 本文は読みやすいゴシック、見出しなどは明朝体でやさしい雰囲気に */
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #faf9f7; /* わずかに温かみのあるオフホワイト */
+            color: #5c544d;
+            overflow-x: hidden;
+        }
+
+        h1, .serif {
+            font-family: 'Shippori Mincho', serif;
+        }
+
+        /* PDE: Color Temperature / Fatigue visualization (やさしい色合いへ) */
+        #fatigue-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            box-shadow: inset 0 0 0 0 rgba(244, 143, 177, 0);
+            transition: box-shadow 0.8s ease-out;
+            z-index: 40;
+        }
+
+        #bg-canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        /* IPDF: Soft Recovery Toast */
+        #recovery-toast {
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            transform: translateY(150%);
+        }
+        #recovery-toast.show {
+            transform: translateY(0);
+        }
+
+        /* 呼吸ガイド用オーバーレイ */
+        #breathe-overlay {
+            transition: opacity 1s ease-in-out;
+            pointer-events: none;
+        }
+
+        /* RCM: Dimension Compression Animation (ふんわり包み込むように) */
+        @keyframes compress {
+            0% { transform: scale(1); opacity: 1; filter: blur(0px); }
+            50% { transform: scale(0.97); opacity: 0.6; filter: blur(3px); }
+            100% { transform: scale(0.95); opacity: 0; filter: blur(6px); }
+        }
+        .animate-compress {
+            animation: compress 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+
+        /* IPDF: Safe Drift Pulse (やさしい鼓動) */
+        @keyframes warning-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(244, 143, 177, 0); }
+            50% { box-shadow: 0 0 0 6px rgba(244, 143, 177, 0.15); }
+        }
+        .safe-drift-warning {
+            animation: warning-pulse 3s infinite;
+            border-color: rgba(244, 143, 177, 0.3) !important;
+        }
+
+        /* PDE: Kinetic Typography & Editor Styles */
+        #editor-container {
+            transition: box-shadow 0.8s ease, border-color 0.8s ease;
+        }
+        textarea {
+            resize: none;
+            /* 疲労時のぼかし（滲み）アニメーション用 */
+            transition: letter-spacing 0.2s ease-out, opacity 0.3s, color 0.5s, text-shadow 0.5s;
+        }
+        textarea:focus {
+            outline: none;
+        }
+        textarea::placeholder {
+            color: #d6d3d1;
+        }
+
+        /* RCM: Details/Summary */
+        details > summary { list-style: none; }
+        details > summary::-webkit-details-marker { display: none; }
+        details[open] summary ~ * { animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Custom UI Controls */
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #d6d3d1; cursor: pointer; margin-top: -6px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); transition: background 0.2s; }
+        input[type=range]:focus::-webkit-slider-thumb { background: #a8a29e; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #f5f5f4; border-radius: 2px; }
+        input[type=range]:disabled::-webkit-slider-thumb { background: #f5f5f4; cursor: not-allowed; box-shadow: none; }
+        input[type=range]:disabled::-webkit-slider-runnable-track { background: #fafaf9; }
+        
+        /* やさしいトグルスイッチ */
+        .toggle-checkbox:checked { right: 0; border-color: #99f6e4; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #99f6e4; }
+        
+        /* CVD Phase Badge Transitions */
+        .phase-drive { background-color: #fffbeb; color: #b45309; border-color: #fef3c7; }
+        .phase-rest { background-color: #f8fafc; color: #94a3b8; border-color: #f1f5f9; }
+
+        /* スクロールバーのカスタマイズ（やさしく） */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #e7e5e4; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #d6d3d1; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center py-8 px-4 relative">
+
+    <!-- FBM Layer (波紋キャンバス) -->
+    <canvas id="bg-canvas"></canvas>
+
+    <!-- PDE Visual Feedback Layer -->
+    <div id="fatigue-overlay"></div>
+
+    <!-- 深呼吸ガイド用レイヤー -->
+    <div id="breathe-overlay" class="fixed inset-0 z-50 bg-white/40 backdrop-blur-sm opacity-0 flex flex-col items-center justify-center">
+        <p id="breathe-text" class="serif text-2xl text-slate-600 tracking-widest transition-all duration-1000 transform translate-y-4 opacity-0">ゆっくりと息を吸って...</p>
+    </div>
+
+    <!-- Main Content -->
+    <main class="w-full max-w-2xl bg-white/70 backdrop-blur-lg rounded-[2rem] shadow-sm border border-stone-100 p-6 sm:p-10 z-10 relative overflow-hidden">
+        
+        <header class="flex justify-between items-end mb-8 border-b border-stone-100 pb-4">
+            <div>
+                <h1 class="text-3xl text-stone-700 tracking-wide">今日のできごと</h1>
+                <p id="date-display" class="text-sm text-stone-400 mt-2 font-light"></p>
+            </div>
+            <div class="text-right">
+                <div class="text-[11px] text-stone-400 mb-1">今の状態</div>
+                <div id="cvm-state-display" class="text-sm font-medium text-emerald-600 bg-emerald-50 px-4 py-1.5 rounded-full inline-block transition-colors duration-500">
+                    おやすみ
+                </div>
+            </div>
+        </header>
+
+        <!-- Velocity & CVD Layer -->
+        <div class="flex flex-col sm:flex-row gap-6 mb-8">
+            <div class="flex-1 bg-stone-50/50 rounded-3xl p-5 border border-stone-100/50 relative">
+                <div class="flex justify-between items-center mb-3">
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs font-medium text-stone-500">こころのペース</label>
+                        <span id="cvd-phase-badge" class="text-[9px] px-2 py-0.5 rounded-full border transition-colors duration-500 phase-rest font-medium tracking-wider">おだやか</span>
+                    </div>
+                    <!-- CVD Auto Toggle -->
+                    <div class="flex items-center gap-2">
+                        <span class="text-[10px] text-stone-400">自然にまかせる</span>
+                        <div class="relative inline-block w-8 h-4 align-middle select-none transition duration-200 ease-in">
+                            <input type="checkbox" name="toggle" id="auto-velocity-toggle" checked class="toggle-checkbox absolute block w-4 h-4 rounded-full bg-white border-4 border-stone-200 appearance-none cursor-pointer transition-all duration-300 z-10"/>
+                            <label for="auto-velocity-toggle" class="toggle-label block overflow-hidden h-4 rounded-full bg-teal-200 cursor-pointer transition-colors duration-300"></label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="flex items-center gap-3">
+                    <input type="range" id="velocity-slider" min="1" max="10" value="5" step="1" disabled>
+                    <span id="velocity-val" class="text-lg font-mono text-stone-500 w-6 text-center">5</span>
+                </div>
+            </div>
+
+            <!-- Fatigue Indicator (IPDF Integrated) -->
+            <div class="flex-1 bg-stone-50/50 rounded-3xl p-5 border border-stone-100/50 relative overflow-hidden">
+                <div class="flex justify-between items-center mb-3">
+                    <label class="text-xs font-medium text-stone-500">思いの満ちぐあい</label>
+                    <span id="fatigue-val" class="text-xs font-mono text-stone-400">0%</span>
+                </div>
+                <div class="h-2 w-full bg-stone-200/50 rounded-full overflow-hidden">
+                    <div id="fatigue-bar" class="h-full bg-teal-300 transition-all duration-500 w-0"></div>
+                </div>
+                <p id="ipdf-warning-text" class="text-[10px] text-stone-400 mt-2 transition-colors duration-500">※心が動くと、少しずつ満ちていきます</p>
+            </div>
+        </div>
+
+        <!-- Impulse Input Area -->
+        <div id="editor-container" class="relative mb-6 rounded-3xl border border-transparent transition-all duration-700 bg-white/60">
+            <textarea id="diary-editor" rows="12" placeholder="心に浮かんだことを、そのまま言葉にしてみてください。" 
+                class="w-full bg-transparent text-stone-700 leading-loose p-5 rounded-3xl"></textarea>
+            <!-- RCM Convergence Indicator -->
+            <div id="rcm-indicator" class="absolute bottom-3 right-5 text-[11px] text-stone-400 opacity-0 transition-opacity duration-700 serif">
+                思いが形になってきました
+            </div>
+        </div>
+
+        <!-- Action Layer -->
+        <div class="flex justify-end items-center">
+            <button id="btn-save" class="px-8 py-3.5 bg-stone-700 text-white rounded-full text-sm font-medium hover:bg-stone-600 transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none shadow-sm flex items-center gap-2 tracking-wider">
+                今日をそっとしまう
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"></path></svg>
+            </button>
+        </div>
+    </main>
+
+    <!-- Past Entries (RCM Storage - Temporal Compression) -->
+    <section class="w-full max-w-2xl mt-12 z-10 pb-24">
+        <h2 class="text-sm font-medium text-stone-400 mb-6 px-4 serif text-center tracking-widest">これまでの記憶</h2>
+        <div id="entries-list" class="space-y-4">
+            <!-- Entries injected here -->
+        </div>
+    </section>
+
+    <!-- IPDF Soft Recovery Toast (やさしい提案) -->
+    <div id="recovery-toast" class="fixed bottom-10 left-1/2 -translate-x-1/2 z-40 bg-white/90 backdrop-blur-md text-stone-600 px-6 py-4 rounded-3xl shadow-xl flex flex-col sm:flex-row items-center gap-4 border border-stone-100/50">
+        <span class="text-sm font-medium">たくさん言葉があふれましたね。<br class="sm:hidden">少しだけ、おやすみしませんか？</span>
+        <button id="btn-recover" class="px-6 py-2 bg-teal-50 text-teal-700 rounded-full text-xs font-bold hover:bg-teal-100 transition-colors whitespace-nowrap">
+            一緒に深呼吸する
+        </button>
+    </div>
+
+    <script>
+        /**
+         * Axiom Dynamics Core (ADC) - Browser Implementation v3.1 (Gentle Theme)
+         */
+
+        // --- 1. CVD (Cyclic Velocity Dynamics) Engine ---
+        class CVDEngine {
+            constructor() {
+                this.isAuto = true;
+                this.lastKeystrokeTime = 0;
+                this.rawVelocity = 5.0;
+                this.alpha = 0.15;
+                this.phase = 'REST';
+            }
+
+            processInput(isOverloaded) {
+                this.phase = 'DRIVE';
+
+                if (!this.isAuto) return;
+                
+                const now = performance.now();
+                if (this.lastKeystrokeTime > 0) {
+                    const dt = (now - this.lastKeystrokeTime) / 1000.0;
+                    let instantVelocity = Math.min(10.0, Math.max(1.0, 1.0 / Math.max(dt, 0.05)));
+                    
+                    if (isOverloaded) instantVelocity *= 0.3; // オーバーロード時はゆっくりに
+                    this.rawVelocity += this.alpha * (instantVelocity - this.rawVelocity);
+                }
+                this.lastKeystrokeTime = now;
+            }
+
+            idleDecay(dt) {
+                const now = performance.now();
+                if (now - this.lastKeystrokeTime > 3000 && this.phase === 'DRIVE') {
+                    this.phase = 'REST';
+                }
+
+                if (!this.isAuto) return;
+                if (now - this.lastKeystrokeTime > 1000) {
+                    this.rawVelocity += (0.5 * dt) * (1.0 - this.rawVelocity);
+                }
+            }
+
+            getMappedVelocity() {
+                return Math.round(Math.min(Math.max(this.rawVelocity, 1), 10));
+            }
+        }
+
+        // --- 2. VIF (Velocity-Impulse Framework) Engine ---
+        class VIFEngine {
+            constructor() {
+                this.v_target = 5.0;
+                this.v_current = 0.0;
+                this.f = 0.0;
+                this.alpha = 0.2;
+                this.threshold = 100.0;
+                this.recoveryRate = 6.0; // 回復速度を少し穏やかに
+                this.isOverloaded = false;
+            }
+
+            update(dt) {
+                this.v_current += this.alpha * (this.v_target - this.v_current);
+                
+                if (this.f > 0) {
+                    const effectiveRecovery = this.recoveryRate * (1 - (this.v_current / 15));
+                    this.f -= effectiveRecovery * dt;
+                    if (this.f < 0) this.f = 0;
+                    
+                    // やさしい設定：75%まで下がれば満杯状態解除
+                    if (this.f < this.threshold * 0.75) {
+                        this.isOverloaded = false;
+                    }
+                }
+            }
+
+            processImpulse(strength = 1.0) {
+                let exertion = (this.v_current * 0.4) * strength; // 疲労の溜まり方を少し優しく
+                if (this.isOverloaded) exertion *= 1.5; 
+                
+                this.f += exertion;
+                
+                if (this.f >= this.threshold) {
+                    this.f = this.threshold;
+                    this.isOverloaded = true;
+                }
+                return true;
+            }
+
+            softRecover() {
+                this.f *= 0.1; // ほぼリフレッシュ
+                this.isOverloaded = false;
+            }
+        }
+
+        // --- 3. CVM (Cyclic Velocity Model) Engine ---
+        class CVMEngine {
+            constructor() {
+                this.L = 0; 
+                this.state = 'Standby';
+            }
+            updateAccumulation(length) {
+                this.L = length;
+                this.evaluateState();
+            }
+            evaluateState() {
+                if (this.L === 0) this.state = 'Standby';
+                else if (this.L < 30) this.state = 'Birth';
+                else if (this.L < 100) this.state = 'Growth';
+                else if (this.L < 250) this.state = 'Maturity';
+                else this.state = 'Decline';
+            }
+            maximize() {
+                this.state = 'Death';
+                this.L = 0;
+            }
+        }
+
+        // --- 4. FBM (Field-Boundary Mechanics) Engine (やさしい波紋) ---
+        class FBMEngine {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.waves = [];
+                this.baseStateTimer = 0;
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+            }
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+            }
+            
+            // 呼吸アニメーション用の特殊ウェーブ
+            injectBreatheWave() {
+                const cx = this.canvas.width / 2;
+                const cy = this.canvas.height / 2;
+                this.waves.push({
+                    x: cx, y: cy, radius: 0,
+                    maxRadius: Math.max(cx, cy) * 1.5,
+                    speed: 200, // 大きくゆっくり広がる
+                    opacity: 0.15,
+                    life: 2.0,
+                    fatigue: 0,
+                    isBase: false,
+                    isBreathe: true
+                });
+            }
+
+            injectEnergy(x, y, intensity, fatigueRatio, isBase = false) {
+                let speedMod = 1.0 - (fatigueRatio * 0.5); 
+                if (isBase) speedMod = 0.1;
+
+                this.waves.push({
+                    x: x, y: y,
+                    radius: 0,
+                    maxRadius: isBase ? 300 : (70 + intensity * 30),
+                    speed: isBase ? 10 : ((40 + intensity * 12) * Math.max(0.2, speedMod)),
+                    opacity: isBase ? 0.05 : (0.15 + (intensity * 0.03)),
+                    life: 1.0,
+                    fatigue: fatigueRatio,
+                    isBase: isBase,
+                    isBreathe: false
+                });
+            }
+
+            update(dt, cvdPhase) {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.baseStateTimer += dt;
+                if (this.baseStateTimer > 4.0 && cvdPhase === 'REST') {
+                    this.baseStateTimer = 0;
+                    const bx = Math.random() * this.canvas.width;
+                    const by = Math.random() * this.canvas.height;
+                    this.injectEnergy(bx, by, 0, 0, true);
+                }
+
+                for (let i = this.waves.length - 1; i >= 0; i--) {
+                    let w = this.waves[i];
+                    w.radius += w.speed * dt;
+                    
+                    // 呼吸波紋は長生き
+                    if (w.isBreathe) {
+                        w.life -= dt * 0.2; 
+                    } else {
+                        w.life -= dt * (w.isBase ? 0.1 : 0.3);
+                    }
+
+                    if (w.life <= 0) {
+                        this.waves.splice(i, 1);
+                        continue;
+                    }
+                    
+                    // やさしい色相計算 (ミントグリーン -> ピーチ -> さくら色)
+                    // HSL: 160(ミント) -> 30(ピーチ) -> 330(ピンク系)
+                    let hue;
+                    if (w.isBreathe) {
+                        hue = 160; // 深呼吸はクリーンなミント色
+                    } else if (w.isBase) {
+                        hue = 180;
+                    } else {
+                        // fatigueRatio (0.0 to 1.0) に応じて色を変える
+                        if (w.fatigue < 0.5) {
+                            // 160(ミント) から 30(ピーチ) へ
+                            hue = 160 - (w.fatigue * 2 * 130);
+                        } else {
+                            // 30(ピーチ) から 330(さくら/ピンク) へ (30 -> 0 -> 330)
+                            let p = (w.fatigue - 0.5) * 2;
+                            hue = 30 - (p * 60);
+                            if (hue < 0) hue += 360;
+                        }
+                    }
+                    
+                    const saturation = w.isBreathe ? 60 : (50 + (w.fatigue * 30));
+                    const lightness = 85 - (w.fatigue * 15); // パステル調を維持
+                    
+                    this.ctx.beginPath();
+                    this.ctx.arc(w.x, w.y, w.radius, 0, Math.PI * 2);
+                    this.ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${w.opacity * w.life})`;
+                    this.ctx.lineWidth = w.isBreathe ? 40 * w.life : (w.isBase ? 3 : (1.5 + (w.fatigue * 3)));
+                    this.ctx.stroke();
+                }
+            }
+        }
+
+        // --- 5. IPDF / PDE Mapper (Perceptual Feedback Layer) ---
+        class PDEngine {
+            constructor(vif, cvm, cvd) {
+                this.vif = vif;
+                this.cvm = cvm;
+                this.cvd = cvd;
+
+                this.elFatigueBar = document.getElementById('fatigue-bar');
+                this.elFatigueVal = document.getElementById('fatigue-val');
+                this.elVelocityVal = document.getElementById('velocity-val');
+                this.elVelocitySlider = document.getElementById('velocity-slider');
+                this.elCvmState = document.getElementById('cvm-state-display');
+                this.elCvdPhaseBadge = document.getElementById('cvd-phase-badge');
+                this.elOverlay = document.getElementById('fatigue-overlay');
+                this.elEditor = document.getElementById('diary-editor');
+                this.elEditorContainer = document.getElementById('editor-container');
+                this.elIpdfWarning = document.getElementById('ipdf-warning-text');
+                this.elRecoveryToast = document.getElementById('recovery-toast');
+                this.elRcmIndicator = document.getElementById('rcm-indicator');
+
+                // やさしい言葉遣いの辞書
+                this.dictCVM = {
+                    'Standby': 'おやすみ', 
+                    'Birth': '言葉の芽生え', 
+                    'Growth': 'のびのび',
+                    'Maturity': '思いがふかまる', 
+                    'Decline': '心が落ち着く', 
+                    'Death': '今日との結び'
+                };
+                
+                this.isSafeDrift = false;
+            }
+
+            render() {
+                if (this.cvd.isAuto) {
+                    const autoV = this.cvd.getMappedVelocity();
+                    this.vif.v_target = autoV;
+                    this.elVelocitySlider.value = autoV;
+                }
+
+                // CVD Phase UI Update (やさしい表現)
+                if (this.cvd.phase === 'DRIVE') {
+                    this.elCvdPhaseBadge.textContent = '動いている';
+                    this.elCvdPhaseBadge.className = 'text-[10px] px-3 py-1 rounded-full border transition-colors duration-500 phase-drive font-medium tracking-wider';
+                } else {
+                    this.elCvdPhaseBadge.textContent = 'おだやか';
+                    this.elCvdPhaseBadge.className = 'text-[10px] px-3 py-1 rounded-full border transition-colors duration-500 phase-rest font-medium tracking-wider';
+                }
+
+                // PDE Kinetic Typography
+                const extraSpacing = (this.vif.v_current / 10) * 1.2; // 少し控えめに
+                this.elEditor.style.letterSpacing = `${extraSpacing}px`;
+
+                const fRatio = Math.min(this.vif.f / this.vif.threshold, 1.0);
+                const fPercent = Math.round(fRatio * 100);
+                
+                // IPDF Overload (優しい滲み表現)
+                if (this.vif.isOverloaded) {
+                    this.elEditor.style.opacity = 0.8;
+                    this.elEditor.style.color = '#8a7164'; // 優しいブラウン系
+                    this.elEditor.style.textShadow = '0 0 2px rgba(138, 113, 100, 0.3)'; // わずかにぼかす
+                } else {
+                    this.elEditor.style.opacity = 1;
+                    this.elEditor.style.color = '';
+                    this.elEditor.style.textShadow = 'none';
+                }
+
+                // RCM Convergence Resistance (収束のやさしい引力)
+                let rcmPressure = 0;
+                if (this.cvm.L > 150) { // 基準文字数を少し増やす
+                    rcmPressure = Math.min(1.0, (this.cvm.L - 150) / 150); 
+                    this.elEditorContainer.style.boxShadow = `inset 0 0 ${rcmPressure * 30}px rgba(168, 162, 158, ${rcmPressure * 0.15})`;
+                    this.elRcmIndicator.style.opacity = rcmPressure;
+                } else {
+                    this.elEditorContainer.style.boxShadow = 'none';
+                    this.elRcmIndicator.style.opacity = 0;
+                }
+
+                this.elVelocityVal.textContent = Math.round(this.vif.v_current);
+                this.elFatigueBar.style.width = `${fPercent}%`;
+                this.elFatigueVal.textContent = `${fPercent}%`;
+
+                // IPDF Safe Drift
+                if (fPercent >= 80 && !this.isSafeDrift) {
+                    this.enterSafeDrift();
+                } else if (fPercent < 70 && this.isSafeDrift) {
+                    this.exitSafeDrift();
+                }
+
+                // やさしいカラーパレット（ティール〜ピーチ〜さくら）
+                if (fPercent < 50) {
+                    this.elFatigueBar.className = 'h-full transition-all duration-500 bg-teal-300';
+                } else if (fPercent < 80) {
+                    this.elFatigueBar.className = 'h-full transition-all duration-500 bg-orange-300';
+                } else {
+                    this.elFatigueBar.className = 'h-full transition-all duration-500 bg-rose-300';
+                }
+
+                if (fRatio > 0.5) {
+                    const intensity = (fRatio - 0.5) * 2;
+                    // ピンク系のあたたかいシャドウ
+                    this.elOverlay.style.boxShadow = `inset 0 0 ${150 * intensity}px ${30 * intensity}px rgba(244, 143, 177, ${intensity * 0.15})`;
+                } else {
+                    this.elOverlay.style.boxShadow = `inset 0 0 0 0 rgba(244, 143, 177, 0)`;
+                }
+
+                this.elCvmState.textContent = this.dictCVM[this.cvm.state] || this.cvm.state;
+
+                // Toast UI control
+                if (this.vif.isOverloaded && !this.elRecoveryToast.classList.contains('show')) {
+                    this.elRecoveryToast.classList.add('show');
+                } else if (!this.vif.isOverloaded && this.elRecoveryToast.classList.contains('show')) {
+                    this.elRecoveryToast.classList.remove('show');
+                }
+            }
+
+            enterSafeDrift() {
+                this.isSafeDrift = true;
+                this.elEditorContainer.classList.add('safe-drift-warning');
+                this.elIpdfWarning.textContent = "おもいがいっぱいです。手を止めても大丈夫ですよ。";
+                this.elIpdfWarning.classList.replace('text-stone-400', 'text-rose-400');
+            }
+
+            exitSafeDrift() {
+                this.isSafeDrift = false;
+                this.elEditorContainer.classList.remove('safe-drift-warning');
+                this.elIpdfWarning.textContent = "※心が動くと、少しずつ満ちていきます";
+                this.elIpdfWarning.classList.replace('text-rose-400', 'text-stone-400');
+            }
+        }
+
+        // --- App Controller ---
+        class AxiomDiaryApp {
+            constructor() {
+                this.cvd = new CVDEngine();
+                this.vif = new VIFEngine();
+                this.cvm = new CVMEngine();
+                this.fbm = new FBMEngine(document.getElementById('bg-canvas'));
+                this.pde = new PDEngine(this.vif, this.cvm, this.cvd);
+                this.isBreathing = false;
+
+                const opts = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' };
+                document.getElementById('date-display').textContent = new Date().toLocaleDateString('ja-JP', opts);
+
+                this.bindEvents();
+                this.loadEntries();
+
+                this.lastTime = performance.now();
+                this.tick = this.tick.bind(this);
+                requestAnimationFrame(this.tick);
+            }
+
+            bindEvents() {
+                const editor = document.getElementById('diary-editor');
+                const slider = document.getElementById('velocity-slider');
+                const toggleAuto = document.getElementById('auto-velocity-toggle');
+                const btnRecover = document.getElementById('btn-recover');
+                const btnSave = document.getElementById('btn-save');
+                const editorContainer = document.getElementById('editor-container');
+                const breatheOverlay = document.getElementById('breathe-overlay');
+                const breatheText = document.getElementById('breathe-text');
+
+                toggleAuto.addEventListener('change', (e) => {
+                    this.cvd.isAuto = e.target.checked;
+                    slider.disabled = this.cvd.isAuto;
+                    if(this.cvd.isAuto) {
+                        this.cvd.rawVelocity = this.vif.v_target;
+                    }
+                });
+
+                slider.addEventListener('input', (e) => {
+                    if(!this.cvd.isAuto) this.vif.v_target = parseFloat(e.target.value);
+                });
+
+                editor.addEventListener('input', (e) => {
+                    if (this.isBreathing) return; // 呼吸中は処理しない
+
+                    const text = e.target.value;
+                    
+                    this.cvm.updateAccumulation(text.length);
+                    this.cvd.processInput(this.vif.isOverloaded); 
+
+                    this.vif.processImpulse(1.0);
+                    
+                    const rect = editor.getBoundingClientRect();
+                    const cx = rect.left + (rect.width / 2) + (Math.random() - 0.5) * 150;
+                    const cy = rect.top + (rect.height / 2) + (Math.random() - 0.5) * 80;
+                    
+                    const fRatio = Math.min(this.vif.f / this.vif.threshold, 1.0);
+                    this.fbm.injectEnergy(cx, cy, this.vif.v_current, fRatio, false);
+                });
+
+                // 深呼吸ガイドの実行
+                btnRecover.addEventListener('click', () => {
+                    if (this.isBreathing) return;
+                    this.isBreathing = true;
+                    editor.disabled = true;
+
+                    // UIの表示
+                    breatheOverlay.classList.remove('opacity-0', 'pointer-events-none');
+                    breatheOverlay.classList.add('opacity-100');
+                    
+                    // Wave injection
+                    this.fbm.injectBreatheWave();
+                    
+                    setTimeout(() => {
+                        breatheText.classList.remove('opacity-0', 'translate-y-4');
+                        breatheText.classList.add('opacity-100', 'translate-y-0');
+                    }, 100);
+
+                    // 吐くフェーズ
+                    setTimeout(() => {
+                        breatheText.classList.remove('opacity-100', 'translate-y-0');
+                        breatheText.classList.add('opacity-0', '-translate-y-4');
+                        setTimeout(() => {
+                            breatheText.textContent = "ゆっくりと吐いて...";
+                            breatheText.classList.remove('-translate-y-4');
+                            breatheText.classList.add('translate-y-4');
+                            
+                            setTimeout(() => {
+                                breatheText.classList.remove('opacity-0', 'translate-y-4');
+                                breatheText.classList.add('opacity-100', 'translate-y-0');
+                            }, 50);
+                        }, 1000);
+                    }, 3000);
+
+                    // 終了フェーズ
+                    setTimeout(() => {
+                        breatheOverlay.classList.remove('opacity-100');
+                        breatheOverlay.classList.add('opacity-0', 'pointer-events-none');
+                        
+                        // 状態の回復
+                        this.vif.softRecover();
+                        this.cvd.phase = 'REST';
+                        if(this.cvd.isAuto) this.cvd.rawVelocity = 2.0; 
+                        
+                        setTimeout(() => {
+                            breatheText.textContent = "ゆっくりと息を吸って..."; // Reset
+                            editor.disabled = false;
+                            editor.focus();
+                            this.isBreathing = false;
+                        }, 1000);
+
+                    }, 6500);
+                });
+
+                btnSave.addEventListener('click', () => {
+                    const text = editor.value.trim();
+                    if (!text) return;
+
+                    editorContainer.classList.add('animate-compress');
+                    btnSave.disabled = true;
+
+                    setTimeout(() => {
+                        this.saveEntry(text);
+                        
+                        editor.value = '';
+                        this.cvm.maximize(); 
+                        this.cvm.updateAccumulation(0);
+                        this.vif.softRecover(); 
+                        this.cvd.phase = 'REST';
+                        if(this.cvd.isAuto) this.cvd.rawVelocity = 1.0; 
+                        
+                        this.fbm.injectEnergy(window.innerWidth/2, window.innerHeight/2, 10, 0, false);
+                        
+                        editorContainer.classList.remove('animate-compress');
+                        btnSave.disabled = false;
+                    }, 600);
+                });
+            }
+
+            saveEntry(text) {
+                // タグをやさしい言葉に
+                let tag = "おだやかな時間";
+                if (this.vif.v_current >= 7) tag = "あふれる思い";
+                else if (this.vif.v_current <= 3) tag = "静かなふりかえり";
+                if (text.length > 150) tag = "たくさんのお話・" + tag;
+
+                const entry = {
+                    id: Date.now(),
+                    date: new Date().toISOString(),
+                    content: text,
+                    velocity: Math.round(this.vif.v_current),
+                    tag: tag
+                };
+
+                const entries = JSON.parse(localStorage.getItem('axiom_diary_entries') || '[]');
+                entries.unshift(entry);
+                localStorage.setItem('axiom_diary_entries', JSON.stringify(entries));
+
+                this.renderEntries();
+            }
+
+            loadEntries() {
+                this.renderEntries();
+            }
+
+            renderEntries() {
+                const list = document.getElementById('entries-list');
+                const entries = JSON.parse(localStorage.getItem('axiom_diary_entries') || '[]');
+                
+                if (entries.length === 0) {
+                    list.innerHTML = '<p class="text-sm text-stone-400 px-2 text-center py-10 border border-dashed border-stone-200 rounded-3xl">まだ記憶はありません。<br>焦らず、あなたのペースで。</p>';
+                    return;
+                }
+
+                list.innerHTML = entries.map((entry, index) => {
+                    const d = new Date(entry.date);
+                    const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+                    const isLatest = index === 0;
+                    
+                    if (isLatest) {
+                        return `
+                            <div class="bg-white/80 p-6 rounded-[2rem] border border-stone-100 shadow-sm transition-all hover:shadow-md relative overflow-hidden">
+                                <div class="absolute left-0 top-0 bottom-0 w-2 bg-teal-200"></div>
+                                <div class="flex flex-wrap gap-3 justify-between items-center mb-4 pl-3">
+                                    <span class="text-xs font-medium text-stone-400 tracking-wider">${d.toLocaleDateString('ja-JP')} ${timeStr}</span>
+                                    <div class="flex gap-2">
+                                        <span class="text-[10px] text-teal-700 bg-teal-50 px-3 py-1 rounded-full border border-teal-100 tracking-wide">${entry.tag}</span>
+                                    </div>
+                                </div>
+                                <p class="text-sm text-stone-600 leading-loose whitespace-pre-wrap pl-3">${entry.content}</p>
+                            </div>
+                        `;
+                    } else {
+                        const snippet = entry.content.length > 25 ? entry.content.substring(0, 25) + '...' : entry.content;
+                        return `
+                            <details class="bg-white/40 rounded-3xl border border-stone-100 shadow-sm group">
+                                <summary class="p-4 cursor-pointer flex flex-wrap justify-between items-center hover:bg-white/60 rounded-3xl transition-colors">
+                                    <div class="flex items-center gap-4 overflow-hidden">
+                                        <span class="text-[11px] text-stone-400 shrink-0 font-mono">${d.toLocaleDateString('ja-JP').slice(5)} ${timeStr}</span>
+                                        <span class="text-sm text-stone-500 truncate select-none">${snippet}</span>
+                                    </div>
+                                    <div class="flex gap-1 shrink-0 ml-2 mt-2 sm:mt-0">
+                                        <span class="text-[10px] text-stone-400 bg-stone-100/50 px-3 py-1 rounded-full">${entry.tag}</span>
+                                    </div>
+                                </summary>
+                                <div class="p-5 pt-2 border-t border-stone-100/50 mt-2">
+                                    <p class="text-sm text-stone-600 leading-loose whitespace-pre-wrap">${entry.content}</p>
+                                </div>
+                            </details>
+                        `;
+                    }
+                }).join('');
+            }
+
+            tick(timestamp) {
+                const dt = (timestamp - this.lastTime) / 1000.0;
+                this.lastTime = timestamp;
+                const safeDt = Math.min(dt, 0.1);
+
+                this.cvd.idleDecay(safeDt);
+                this.vif.update(safeDt);
+                this.fbm.update(safeDt, this.cvd.phase);
+                this.pde.render();
+
+                requestAnimationFrame(this.tick);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const app = new AxiomDiaryApp();
+        });
+    </script>
+</body>
+</html>
