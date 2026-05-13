@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>光の粒の観察シミュレーター</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #0f172a; /* slate-900 */
+            color: #f8fafc; /* slate-50 */
+            overflow: hidden;
+            font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+        }
+        canvas {
+            display: block;
+            touch-action: none;
+        }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        /* スクロールバーのカスタマイズ */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col md:flex-row">
+
+    <!-- UIトグルボタン -->
+    <button id="btn-toggle-ui" class="absolute top-4 right-4 z-50 bg-slate-800/80 backdrop-blur border border-slate-600 text-slate-200 p-2.5 rounded-full hover:bg-slate-700 transition-all shadow-lg focus:outline-none" title="UIの表示/非表示">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
+
+    <!-- サイドバー (UI/説明) -->
+    <div id="ui-panel" class="glass-panel w-full md:w-85 h-auto md:h-full p-5 flex flex-col z-40 absolute top-0 left-0 pointer-events-none md:pointer-events-auto overflow-y-auto transition-transform duration-300 ease-in-out translate-x-0 max-h-screen">
+        <h1 class="text-2xl font-bold mb-2 tracking-wider">観察シミュレーター</h1>
+        <p class="text-xs text-slate-300 mb-4 leading-relaxed">
+            無数の光の粒が成長と衰退を繰り返し、互いに<b>衝突</b>して能力を奪い合っています。生命力（HP）が尽きた粒は残骸として固定されます。
+        </p>
+
+        <!-- 状況モニター -->
+        <div class="mb-4 bg-slate-800/60 p-4 rounded-lg border border-slate-600 shadow-inner">
+            <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest mb-3 flex justify-between items-center">
+                <span>状況モニター</span>
+                <span id="stat-fps" class="text-xs font-mono text-slate-400 bg-slate-900 px-2 py-1 rounded">0 FPS</span>
+            </h2>
+            <div class="space-y-2">
+                <div class="flex justify-between items-end">
+                    <span class="text-xs text-slate-400">生存状況</span>
+                    <span class="font-mono text-sm text-slate-100"><span id="stat-alive" class="text-green-400">0</span> / <span id="stat-total" class="text-slate-500">0</span></span>
+                </div>
+                <div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
+                    <div id="stat-alive-bar" class="bg-green-500 h-full w-full transition-all duration-300"></div>
+                </div>
+                
+                <div class="flex justify-between items-center pt-2">
+                    <span class="text-xs text-slate-400">突然変異 (エリート: 合計90%以上)</span>
+                    <span id="stat-elite" class="font-mono text-sm text-yellow-400 font-bold drop-shadow-[0_0_2px_rgba(250,204,33,0.8)]">0</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-xs text-slate-400">平均能力値</span>
+                    <span id="stat-avg" class="font-mono text-sm text-blue-300">0.0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="mb-4">
+            <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">遊び方</h2>
+            <ul class="text-xs space-y-2 text-slate-200">
+                <li class="flex items-start">
+                    <span class="mr-2">⚔️</span>
+                    <span>衝突時、<b>攻撃力</b>が<b>防御力</b>を上回ると相手の<b>生命力（HP）</b>を削ります。初期HPは100です。</span>
+                </li>
+            </ul>
+        </div>
+
+        <div class="mb-4 flex-grow">
+            <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">色の意味 (最も高い能力)</h2>
+            <div class="grid grid-cols-1 gap-1.5 text-[11px]">
+                <div class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-red-500 mr-2 shrink-0"></span>生命力 <span class="text-slate-400 ml-1">(ピンチ時に赤色化 / 0で死骸化)</span></div>
+                <div class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-orange-400 mr-2 shrink-0"></span>攻撃力 <span class="text-slate-400 ml-1">(HPへのダメージ量)</span></div>
+                <div class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-yellow-400 mr-2 shrink-0"></span>防御力 <span class="text-slate-400 ml-1">(ダメージを軽減)</span></div>
+                <div class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-blue-500 mr-2 shrink-0"></span>知力 <span class="text-slate-400 ml-1">(相手の長所ステータスも削る)</span></div>
+                <div class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-green-400 mr-2 shrink-0"></span>抵抗力 <span class="text-slate-400 ml-1">(自然衰退を防ぐ)</span></div>
+                <div class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-purple-500 mr-2 shrink-0"></span>素早さ <span class="text-slate-400 ml-1">(移動スピード)</span></div>
+                <div class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-cyan-400 mr-2 shrink-0"></span>器用さ <span class="text-slate-400 ml-1">(10%〜100%の命中率)</span></div>
+            </div>
+        </div>
+
+        <div class="mt-auto pointer-events-auto flex gap-3 pt-2">
+             <button id="btn-reset" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 px-3 rounded transition-colors text-sm font-medium">
+                初期化
+            </button>
+             <button id="btn-pause" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 px-3 rounded transition-colors text-sm font-medium">
+                一時停止
+            </button>
+        </div>
+    </div>
+
+    <!-- メインキャンバス -->
+    <div class="flex-1 relative w-full h-full">
+        <canvas id="sim-canvas" class="absolute top-0 left-0 w-full h-full"></canvas>
+    </div>
+
+<script>
+/**
+ * Project: MOODY - Dynamic Collision System (VIF Dynamics)
+ * Framework: UCD-F_ABC Core Integration
+ */
+
+// --- 1. Physics & State Controller ---
+class MoodyEntityManager {
+    constructor(count, width, height) {
+        this.count = count;
+        // UCD-F_ABC: 32bit integer array for states
+        this.data = new Uint32Array(count);
+        this.seeds = new Uint32Array(count);
+        
+        // 【変更】生命力(HP)を独立したパラメータとして管理
+        this.hp = new Int32Array(count);
+        
+        // Physics Data
+        this.x = new Float32Array(count);
+        this.y = new Float32Array(count);
+        this.vx = new Float32Array(count);
+        this.vy = new Float32Array(count);
+        
+        // Zero-Allocation Spatial Hash Arrays
+        this.head = null;
+        this.next = null;
+
+        this.init(width, height);
+    }
+
+    init(width, height) {
+        for (let i = 0; i < this.count; i++) {
+            this.seeds[i] = Math.floor(Math.random() * 0xFFFFFFFF);
+            
+            // 各光につき初期HP 100 を設定
+            this.hp[i] = 100;
+            
+            // Random distribution and velocities
+            this.x[i] = Math.random() * width;
+            this.y[i] = Math.random() * height;
+            
+            const angle = Math.random() * Math.PI * 2;
+            this.vx[i] = Math.cos(angle);
+            this.vy[i] = Math.sin(angle);
+
+            // 初期状態を1〜4のランダム値にしてバラつきを持たせる (インデックス1〜6のみ)
+            let initialState = 0;
+            for (let s = 1; s < 7; s++) {
+                const val = Math.floor(Math.random() * 4) + 1; // 1 to 4
+                initialState |= (val & 0b111) << (s * 3);
+            }
+            this.data[i] = initialState;
+        }
+    }
+
+    xorShift(n) {
+        n ^= n << 13;
+        n ^= n >> 17;
+        n ^= n << 5;
+        return n >>> 0;
+    }
+
+    // --- Core Logic: Random Amusement System (RAS) ---
+    step(globalTick) {
+        for (let i = 0; i < this.count; i++) {
+            const hp = this.hp[i];
+            // 死んだ粒（HP=0）はZero-Lock Terrainとして固定化され、愉悦の対象から外れる
+            if (hp <= 0) continue; 
+
+            let state = this.data[i];
+            let rng = this.xorShift(this.seeds[i] ^ globalTick);
+
+            let stats = [
+                0, // 0インデックス(元HP)はシステム変動から除外
+                (state >> 3) & 0b111,  // 1: ATK
+                (state >> 6) & 0b111,  // 2: DEF
+                (state >> 9) & 0b111,  // 3: SPA (知力)
+                (state >> 12) & 0b111, // 4: SPD (抵抗力)
+                (state >> 15) & 0b111, // 5: SPE (素早さ)
+                (state >> 18) & 0b111  // 6: ACC (器用さ)
+            ];
+
+            // 1〜6の範囲で増減対象を決定
+            const upIdx = (rng % 6) + 1;
+            rng = this.xorShift(rng);
+            let downIdx = (rng % 6) + 1;
+            if (downIdx === upIdx) {
+                downIdx = (downIdx % 6) + 1;
+            }
+
+            // +2 (Up)
+            stats[upIdx] = Math.min(stats[upIdx] + 2, 6);
+
+            // -1 (Down)
+            // SPD (抵抗力) による自然衰退の確率ガード
+            const spd = stats[4];
+            const resistChance = spd * 0.15;
+            const isResisted = Math.random() < resistChance;
+
+            if (!isResisted) {
+                stats[downIdx] = Math.max(stats[downIdx] - 1, 0);
+            }
+
+            let newState = 0;
+            // パック時も1〜6のみ
+            for (let s = 1; s < 7; s++) {
+                newState |= (stats[s] & 0b111) << (s * 3);
+            }
+            
+            this.data[i] = newState;
+            this.seeds[i] = rng;
+        }
+    }
+
+    // --- Core Logic: VIF Dynamics & Spatial Hash Collision ---
+    updatePhysics(width, height) {
+        const CELL_SIZE = 12;
+        const cols = Math.ceil(width / CELL_SIZE);
+        const rows = Math.ceil(height / CELL_SIZE);
+        const numCells = cols * rows;
+
+        // Spatial Hash Allocation (only if size changes)
+        if (!this.head || this.head.length !== numCells) {
+            this.head = new Int32Array(numCells);
+            this.next = new Int32Array(this.count);
+        }
+        this.head.fill(-1); // Clear Hash
+
+        // Move and Register into Spatial Hash
+        for (let i = 0; i < this.count; i++) {
+            const hp = this.hp[i];
+            const state = this.data[i];
+            const spe = (state >> 15) & 0b111;
+            
+            if (hp > 0) {
+                // Velocity is affected by SPE
+                const speed = (spe * 0.4) + 0.5; 
+                this.x[i] += this.vx[i] * speed;
+                this.y[i] += this.vy[i] * speed;
+
+                // Wall Bounding
+                if (this.x[i] < 0) { this.x[i] = 0; this.vx[i] *= -1; }
+                else if (this.x[i] > width) { this.x[i] = width; this.vx[i] *= -1; }
+                
+                if (this.y[i] < 0) { this.y[i] = 0; this.vy[i] *= -1; }
+                else if (this.y[i] > height) { this.y[i] = height; this.vy[i] *= -1; }
+            }
+
+            // Register to Grid
+            const col = Math.floor(this.x[i] / CELL_SIZE);
+            const row = Math.floor(this.y[i] / CELL_SIZE);
+            if (col >= 0 && col < cols && row >= 0 && row < rows) {
+                const idx = col + row * cols;
+                this.next[i] = this.head[idx];
+                this.head[idx] = i;
+            }
+        }
+
+        // Check Collisions
+        for (let i = 0; i < this.count; i++) {
+            const hpI = this.hp[i];
+            if (hpI <= 0) continue; // Dead don't initiate collision checks
+
+            const col = Math.floor(this.x[i] / CELL_SIZE);
+            const row = Math.floor(this.y[i] / CELL_SIZE);
+            
+            // 3x3 Neighbor search
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const c = col + dx;
+                    const r = row + dy;
+                    if (c >= 0 && c < cols && r >= 0 && r < rows) {
+                        let j = this.head[c + r * cols];
+                        while (j !== -1) {
+                            if (i < j) { // Process pair only once
+                                const dxPos = this.x[j] - this.x[i];
+                                const dyPos = this.y[j] - this.y[i];
+                                const distSq = dxPos * dxPos + dyPos * dyPos;
+                                
+                                const minDist = 4.0; // Fixed radius for simplicity
+                                if (distSq < minDist * minDist && distSq > 0) {
+                                    const dist = Math.sqrt(distSq);
+                                    const nx = dxPos / dist;
+                                    const ny = dyPos / dist;
+                                    const overlap = minDist - dist;
+                                    
+                                    const hpJ = this.hp[j];
+                                    const mJ = hpJ > 0 ? 1 : 0;
+                                    
+                                    // Positional correction
+                                    if (mJ) {
+                                        this.x[i] -= nx * overlap * 0.5;
+                                        this.y[i] -= ny * overlap * 0.5;
+                                        this.x[j] += nx * overlap * 0.5;
+                                        this.y[j] += ny * overlap * 0.5;
+                                        
+                                        // Elastic bounce swap
+                                        const p = (this.vx[i]*nx + this.vy[i]*ny - this.vx[j]*nx - this.vy[j]*ny);
+                                        this.vx[i] -= p * nx;
+                                        this.vy[i] -= p * ny;
+                                        this.vx[j] += p * nx;
+                                        this.vy[j] += p * ny;
+                                    } else {
+                                        // J is dead (Static obstacle)
+                                        this.x[i] -= nx * overlap;
+                                        this.y[i] -= ny * overlap;
+                                        // Bounce off obstacle
+                                        const p = 2 * (this.vx[i]*nx + this.vy[i]*ny);
+                                        this.vx[i] -= p * nx;
+                                        this.vy[i] -= p * ny;
+                                    }
+
+                                    // Combat Logic
+                                    this.resolveCombat(i, j);
+                                }
+                            }
+                            j = this.next[j];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Battle resolution based on ATK, DEF, SPA, ACC
+    resolveCombat(i, j) {
+        const stateI = this.data[i];
+        const stateJ = this.data[j];
+        
+        const hpI = this.hp[i];
+        const hpJ = this.hp[j];
+        
+        const atkI = (stateI >> 3) & 0b111;
+        const defI = (stateI >> 6) & 0b111;
+        const spaI = (stateI >> 9) & 0b111;
+        const accI = (stateI >> 18) & 0b111;
+
+        const atkJ = (stateJ >> 3) & 0b111;
+        const defJ = (stateJ >> 6) & 0b111;
+        const spaJ = (stateJ >> 9) & 0b111;
+        const accJ = (stateJ >> 18) & 0b111;
+
+        // 器用さ(ACC)による攻撃命中率の計算
+        const hitChanceI = 0.10 + (accI * 0.15);
+        const hitChanceJ = 0.10 + (accJ * 0.15);
+
+        // 基本ダメージ量（ATKとDEFの差分）
+        const baseDamage = 15;
+        const damageMultiplier = 5;
+
+        // I hits J
+        if (atkI > defJ && hpJ > 0) {
+            if (Math.random() < hitChanceI) {
+                // HPを削る
+                const damage = baseDamage + (atkI - defJ) * damageMultiplier;
+                this.hp[j] = Math.max(0, this.hp[j] - damage);
+
+                // 知力(SPA)による長所狙撃 (相手の最大能力ステータスも的確に削る)
+                const isPrecisionStrikeI = Math.random() < spaI * 0.15;
+                if (isPrecisionStrikeI && this.hp[j] > 0) {
+                    this.damageStat(j, true);
+                }
+            }
+        }
+        // J hits I
+        if (atkJ > defI && hpI > 0) {
+            if (Math.random() < hitChanceJ) {
+                // HPを削る
+                const damage = baseDamage + (atkJ - defI) * damageMultiplier;
+                this.hp[i] = Math.max(0, this.hp[i] - damage);
+
+                // 相手からの反撃
+                const isPrecisionStrikeJ = Math.random() < spaJ * 0.15;
+                if (isPrecisionStrikeJ && this.hp[i] > 0) {
+                    this.damageStat(i, true);
+                }
+            }
+        }
+    }
+
+    // 相手のステータス（1〜6）を削る
+    damageStat(targetIdx, isPrecisionStrike = false) {
+        let state = this.data[targetIdx];
+        
+        let statToHit = Math.floor(Math.random() * 6) + 1; // 1 to 6
+
+        // 知力による長所狙撃（一番高いステータスを狙う）
+        if (isPrecisionStrike) {
+            let maxVal = -1;
+            let maxIdx = statToHit;
+            for (let s = 1; s < 7; s++) {
+                const val = (state >> (s * 3)) & 0b111;
+                if (val > maxVal) {
+                    maxVal = val;
+                    maxIdx = s;
+                } else if (val === maxVal && Math.random() < 0.5) {
+                    maxIdx = s;
+                }
+            }
+            statToHit = maxIdx;
+        }
+
+        let val = (state >> (statToHit * 3)) & 0b111;
+        if (val > 0) {
+            val -= 1;
+            // Bitwise update for unsigned 32bit integer
+            state = (state & ~(0b111 << (statToHit * 3))) | (val << (statToHit * 3));
+            this.data[targetIdx] = state >>> 0;
+            return true;
+        }
+        return false;
+    }
+}
+
+// --- 2. View Layer (Renderer) ---
+class MoodyRenderer {
+    constructor(canvas, manager) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d', { alpha: false });
+        this.manager = manager;
+        
+        this.colors = [
+            'rgb(239, 68, 68)',   // 0: HP (Red) - ピンチ時のみ使用
+            'rgb(251, 146, 60)',  // 1: ATK (Orange)
+            'rgb(250, 204, 21)',  // 2: DEF (Yellow)
+            'rgb(59, 130, 246)',  // 3: SPA (Blue)
+            'rgb(74, 222, 128)',  // 4: SPD (Green)
+            'rgb(168, 85, 247)',  // 5: SPE (Purple)
+            'rgb(34, 211, 238)'   // 6: ACC (Cyan)
+        ];
+        
+        this.colorCache = [];
+        for(let c=0; c<7; c++){
+            this.colorCache[c] = [];
+            for(let a=0; a<=10; a++){
+                let alpha = (a / 10).toFixed(1);
+                this.colorCache[c][a] = this.colors[c].replace('rgb', 'rgba').replace(')', `, ${alpha})`);
+            }
+        }
+    }
+
+    resize(w, h) {
+        this.canvas.width = w;
+        this.canvas.height = h;
+    }
+
+    render(time) {
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        
+        // Motion Blur (Trail) effect
+        this.ctx.fillStyle = 'rgba(15, 23, 42, 0.4)';
+        this.ctx.fillRect(0, 0, w, h);
+
+        const data = this.manager.data;
+        const count = this.manager.count;
+        
+        for (let i = 0; i < count; i++) {
+            const state = data[i];
+            const hp = this.manager.hp[i];
+            
+            // 描画サイズ・輝度のための合計値計算
+            // HPも0〜6のスケールに変換して計算に加える
+            const hpScale = Math.ceil((hp / 100) * 6);
+            let totalStat = hpScale; 
+            
+            let maxStat = -1;
+            let maxIdx = 1; // 色の基準 (1〜6)
+            
+            for (let s = 1; s < 7; s++) {
+                const val = (state >> (s * 3)) & 0b111;
+                totalStat += val;
+                if (val > maxStat) {
+                    maxStat = val;
+                    maxIdx = s;
+                }
+            }
+            
+            // 【変更】HPが30以下のピンチ時は、強制的に赤色(0)で警告表示
+            if (hp > 0 && hp <= 30) {
+                maxIdx = 0; 
+            }
+
+            let intensity = totalStat / 42.0;
+            const size = hp > 0 ? 1.5 + (intensity * 4.0) : 1.5;
+            
+            let alphaIdx = Math.floor(intensity * 10);
+            if(alphaIdx > 10) alphaIdx = 10;
+            if(alphaIdx < 2) alphaIdx = 2;
+
+            if (hp <= 0) {
+                // Dead entities (Zero-Lock Terrain) are painted dull gray
+                this.ctx.fillStyle = 'rgba(71, 85, 105, 0.4)'; // slate-600
+            } else {
+                this.ctx.fillStyle = this.colorCache[maxIdx][alphaIdx];
+            }
+            
+            this.ctx.fillRect(
+                this.manager.x[i] - size/2, 
+                this.manager.y[i] - size/2, 
+                size, 
+                size
+            );
+            
+            // エリート化（ハロー効果）の条件
+            // 能力合計値が90%以上（intensity >= 0.9）の真の強者のみ光る
+            if (hp > 0 && intensity >= 0.9) {
+                this.ctx.globalCompositeOperation = 'lighter';
+                this.ctx.fillStyle = this.colorCache[maxIdx][Math.max(1, alphaIdx - 4)];
+                this.ctx.fillRect(
+                    this.manager.x[i] - (size*3)/2, 
+                    this.manager.y[i] - (size*3)/2, 
+                    size*3, 
+                    size*3
+                );
+                this.ctx.globalCompositeOperation = 'source-over';
+            }
+        }
+    }
+}
+
+// --- 3. App Controller ---
+let manager, renderer;
+let isPlaying = true;
+let animationId;
+let globalTick = 0;
+let lastTime = performance.now();
+let frames = 0;
+
+// Optimized entity count for Spatial Hash Performance in JS
+const ENTITY_COUNT = 2500; 
+
+function init() {
+    const canvas = document.getElementById('sim-canvas');
+    const w = canvas.parentElement.clientWidth;
+    const h = canvas.parentElement.clientHeight;
+    
+    manager = new MoodyEntityManager(ENTITY_COUNT, w, h);
+    renderer = new MoodyRenderer(canvas, manager);
+    renderer.resize(w, h);
+    
+    globalTick = 0;
+
+    // --- UI Toggle Logic ---
+    const uiPanel = document.getElementById('ui-panel');
+    const btnToggleUI = document.getElementById('btn-toggle-ui');
+    let uiVisible = true;
+    
+    btnToggleUI.addEventListener('click', () => {
+        uiVisible = !uiVisible;
+        if (uiVisible) {
+            uiPanel.classList.remove('-translate-x-full', 'md:-translate-x-full');
+            btnToggleUI.style.opacity = "1";
+        } else {
+            uiPanel.classList.add('-translate-x-full', 'md:-translate-x-full');
+            btnToggleUI.style.opacity = "0.5";
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        renderer.resize(canvas.parentElement.clientWidth, canvas.parentElement.clientHeight);
+    });
+
+    document.getElementById('btn-pause').addEventListener('click', (e) => {
+        isPlaying = !isPlaying;
+        e.target.innerText = isPlaying ? "一時停止" : "再開";
+        e.target.classList.toggle('bg-indigo-600');
+        e.target.classList.toggle('bg-green-600');
+        e.target.classList.toggle('hover:bg-indigo-500');
+        e.target.classList.toggle('hover:bg-green-500');
+        if (isPlaying) {
+            lastTime = performance.now();
+            loop(performance.now());
+        }
+    });
+
+    document.getElementById('btn-reset').addEventListener('click', () => {
+        manager.init(canvas.width, canvas.height);
+        globalTick = 0;
+        renderer.ctx.fillStyle = '#0f172a';
+        renderer.ctx.fillRect(0, 0, canvas.width, canvas.height);
+        updateStatsUI();
+    });
+
+    loop(performance.now());
+}
+
+function updateStatsUI() {
+    let aliveCount = 0;
+    let eliteCount = 0;
+    let totalStatsSum = 0;
+
+    for (let i = 0; i < manager.count; i++) {
+        const hp = manager.hp[i];
+        if (hp > 0) {
+            aliveCount++;
+            const state = manager.data[i];
+            const hpScale = Math.ceil((hp / 100) * 6);
+            let statSum = hpScale;
+            
+            for (let s = 1; s < 7; s++) {
+                statSum += (state >> (s * 3)) & 0b111;
+            }
+            totalStatsSum += statSum;
+            
+            // エリート数のカウント
+            if ((statSum / 42.0) >= 0.9) {
+                eliteCount++;
+            }
+        }
+    }
+
+    const aliveRatio = (aliveCount / manager.count) * 100;
+    document.getElementById('stat-alive').innerText = aliveCount;
+    document.getElementById('stat-total').innerText = manager.count;
+    document.getElementById('stat-elite').innerText = eliteCount;
+    document.getElementById('stat-avg').innerText = aliveCount > 0 ? (totalStatsSum / aliveCount).toFixed(1) : "0.0";
+    document.getElementById('stat-alive-bar').style.width = `${aliveRatio}%`;
+    
+    // ゲージの色を変える (赤に近づくほど危険)
+    if (aliveRatio < 20) {
+        document.getElementById('stat-alive-bar').className = "bg-red-500 h-full transition-all duration-300";
+    } else if (aliveRatio < 50) {
+        document.getElementById('stat-alive-bar').className = "bg-yellow-500 h-full transition-all duration-300";
+    } else {
+        document.getElementById('stat-alive-bar').className = "bg-green-500 h-full transition-all duration-300";
+    }
+}
+
+function loop(time) {
+    if (!isPlaying) return;
+    
+    // FPS Calculation
+    frames++;
+    if (time - lastTime >= 1000) {
+        document.getElementById('stat-fps').innerText = `${Math.round((frames * 1000) / (time - lastTime))} FPS`;
+        frames = 0;
+        lastTime = time;
+    }
+
+    // Time Dilation: Apply Random Amusement System periodically
+    if (globalTick % 3 === 0) {
+        manager.step(globalTick);
+    }
+    
+    // Periodic Stats Update (Every 30 ticks to save performance)
+    if (globalTick % 30 === 0) {
+        updateStatsUI();
+    }
+    
+    // Physics & Collisions run every frame
+    manager.updatePhysics(renderer.canvas.width, renderer.canvas.height);
+    
+    renderer.render(time);
+    globalTick++;
+    
+    animationId = requestAnimationFrame(loop);
+}
+
+window.onload = init;
+</script>
+</body>
+</html>
