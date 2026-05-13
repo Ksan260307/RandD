@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>DrillRoute - 混雑回避ナビゲーション</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* --- UI Animations --- */
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 15px rgba(16, 185, 129, 0.5); }
+      50% { box-shadow: 0 0 30px rgba(16, 185, 129, 1); }
+    }
+    .btn-drill-active {
+      animation: pulse-glow 1.5s infinite;
+    }
+    canvas {
+      image-rendering: pixelated; /* Crisp look for the grid */
+    }
+    /* Simple loading spinner */
+    .loader {
+      border: 3px solid #374151;
+      border-top: 3px solid #10b981;
+      border-radius: 50%;
+      width: 16px;
+      height: 16px;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="bg-gray-900 text-white font-sans overflow-hidden antialiased flex items-center justify-center min-h-screen md:p-4">
+
+  <!-- Mobile App Container Container (Expanded max-width for better visibility) -->
+  <div class="w-full max-w-2xl h-[100dvh] md:h-[92vh] bg-gray-800 md:rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col relative md:border-4 md:border-gray-700">
+    
+    <!-- App Header -->
+    <div class="bg-gradient-to-r from-indigo-700 to-purple-700 p-4 md:p-5 shadow-md z-10 flex-shrink-0">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-xl md:text-2xl font-extrabold tracking-wide flex items-center gap-2">
+            <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            DrillRoute
+          </h1>
+          <p class="text-xs text-indigo-200 mt-1 opacity-80">AI自律進化型・混雑回避ナビ</p>
+        </div>
+        <div class="bg-gray-900 bg-opacity-50 px-3 py-1 rounded-full text-xs font-mono text-emerald-300 border border-emerald-500/30">
+          v1.1.0
+        </div>
+      </div>
+    </div>
+
+    <!-- Map Canvas Area -->
+    <div class="flex-1 relative bg-[#0f172a]" id="canvasContainer">
+      <!-- Grid Simulation Canvas -->
+      <canvas id="mapCanvas" class="absolute inset-0 w-full h-full"></canvas>
+      
+      <!-- Overlay Labels -->
+      <div class="absolute top-4 right-4 bg-gray-900/80 backdrop-blur-sm px-3 py-2 rounded-lg border border-gray-700 text-xs shadow-lg pointer-events-none">
+        <div class="flex items-center gap-2 mb-1"><span class="w-3 h-3 rounded-full bg-red-500 blur-[2px]"></span> 混雑・渋滞エリア</div>
+        <div class="flex items-center gap-2 mb-1"><span class="w-3 h-3 bg-gray-600 rounded-sm"></span> 建物・進入不可</div>
+        <div class="flex items-center gap-2 mb-1"><span class="w-3 h-3 rounded-full bg-emerald-400"></span> 回避ルート</div>
+        <div class="flex items-center gap-2"><span class="w-3 h-0.5 bg-orange-500"></span> 通常ルート</div>
+      </div>
+    </div>
+
+    <!-- Status & Info Panel -->
+    <div class="bg-gray-800 border-t border-gray-700 p-4 md:px-6 z-10 transition-all duration-300 flex-shrink-0" id="statusPanel">
+      <div class="flex items-start gap-3">
+        <div id="statusIcon" class="mt-1 text-2xl">📍</div>
+        <div class="flex-1">
+          <h3 id="statusTitle" class="font-bold text-gray-100">目的地を設定しました</h3>
+          <p id="statusDesc" class="text-sm text-gray-400 mt-1 leading-relaxed">
+            下のボタンからルート検索を開始してください。赤いエリアは現在混雑が予想されています。
+          </p>
+          
+          <!-- ルート比較パネル（検索完了後に表示） -->
+          <div id="routeComparison" class="hidden mt-4 bg-gray-900/80 rounded-xl border border-gray-700 shadow-inner overflow-hidden">
+            <div class="grid grid-cols-2 divide-x divide-gray-700/50">
+              <!-- 通常ルート Stats -->
+              <div class="p-3">
+                <div class="flex items-center gap-1.5 text-gray-400 text-xs mb-1.5 font-medium">
+                  <span class="w-2.5 h-2.5 bg-orange-500 rounded-full"></span>通常ルート
+                </div>
+                <div class="flex items-baseline gap-1">
+                  <span id="normalTime" class="text-2xl font-bold text-orange-400">--</span>
+                  <span class="text-xs text-orange-400/80">分</span>
+                </div>
+                <div id="normalDistance" class="font-mono text-xs text-gray-500 mt-1">-- m</div>
+              </div>
+              
+              <!-- 回避ルート Stats -->
+              <div class="p-3 relative overflow-hidden bg-emerald-900/10">
+                <div class="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent"></div>
+                <div class="flex items-center gap-1.5 text-emerald-300 text-xs mb-1.5 font-medium relative z-10">
+                  <span class="w-2.5 h-2.5 bg-emerald-400 rounded-full shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>回避ルート
+                </div>
+                <div class="flex items-baseline gap-1 relative z-10">
+                  <span id="drillTime" class="text-2xl font-bold text-emerald-400">--</span>
+                  <span class="text-xs text-emerald-400/80">分</span>
+                </div>
+                <div id="drillDistance" class="font-mono text-xs text-emerald-500/70 mt-1 relative z-10">-- m</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Control Buttons -->
+    <div class="bg-gray-800 p-4 pb-8 md:p-6 md:pt-2 border-t border-gray-700/50 z-10 flex-shrink-0">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <button id="btnNormal" class="col-span-1 w-full py-3.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-gray-200 font-medium transition flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-gray-500 text-sm md:text-base">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
+          通常ルート（最短距離）
+        </button>
+        
+        <button id="btnDrill" class="col-span-1 w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-gray-900 font-bold text-sm md:text-base shadow-[0_0_15px_rgba(16,185,129,0.4)] transform transition hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-emerald-400">
+          <svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+          混雑回避ルートを検索
+        </button>
+
+        <button id="btnRandomize" class="col-span-1 md:col-span-2 w-full py-2.5 mt-1 md:mt-0 rounded-lg bg-gray-900 md:bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 font-medium transition flex items-center justify-center gap-2 focus:outline-none border border-gray-700 hover:border-gray-600 text-xs md:text-sm">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+          マップの状況をランダムに変える
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =====================================================================
+    // 内部ロジックエンジン
+    // =====================================================================
+    const canvas = document.getElementById('mapCanvas');
+    const ctx = canvas.getContext('2d', { alpha: false }); 
+    const container = document.getElementById('canvasContainer');
+
+    // UI Elements
+    const btnNormal = document.getElementById('btnNormal');
+    const btnDrill = document.getElementById('btnDrill');
+    const btnRandomize = document.getElementById('btnRandomize');
+    const statusTitle = document.getElementById('statusTitle');
+    const statusDesc = document.getElementById('statusDesc');
+    const statusIcon = document.getElementById('statusIcon');
+    const comparisonDiv = document.getElementById('routeComparison');
+    const normTimeEl = document.getElementById('normalTime');
+    const normDistEl = document.getElementById('normalDistance');
+    const drillTimeEl = document.getElementById('drillTime');
+    const drillDistEl = document.getElementById('drillDistance');
+
+    // --- UCD-F_ABC Core Constraints ---
+    const GRID_SIZE = 50; 
+    let CELL_W = 0;
+    let CELL_H = 0;
+
+    const mapGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
+    let entropyGrid = new Float32Array(GRID_SIZE * GRID_SIZE);
+    let entropyBuffer = new Float32Array(GRID_SIZE * GRID_SIZE); 
+
+    const getHash = (x, y) => y * GRID_SIZE + x;
+
+    // Navigation Points
+    let startPoint = { x: 5, y: 5 };
+    let goalPoint = { x: GRID_SIZE - 6, y: GRID_SIZE - 6 };
+
+    // Path State
+    let currentPath = []; // 描画されるメインのパス
+    let normalPath = [];  // 比較表示用の通常ルート
+    let isDrilling = false;
+    let isDrillMode = false; // エメラルドの回避ルートを描画するモードか
+    let drillProgress = 0;
+    let particles = [];
+    let analyzeTimeout = null; 
+
+    // Congestion Sources (エントロピー発生源)
+    const congestionSources = [];
+
+    // --- 初期化 (Initialization) ---
+    function initSystem() {
+      resizeCanvas();
+      generateCityScape();
+      initCongestionSources();
+      requestAnimationFrame(engineLoop);
+    }
+
+    function resizeCanvas() {
+      const rect = container.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+      
+      CELL_W = rect.width / GRID_SIZE;
+      CELL_H = rect.height / GRID_SIZE;
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+
+    // --- 地形生成 (CityScape Generation) ---
+    function generateCityScape() {
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          const hash = getHash(x, y);
+          if (x % 5 === 0 || y % 5 === 0) {
+            mapGrid[hash] = 0;
+          } else {
+            mapGrid[hash] = Math.random() > 0.15 ? 1 : 0;
+          }
+        }
+      }
+      
+      for(let dy=-2; dy<=2; dy++){
+        for(let dx=-2; dx<=2; dx++){
+            mapGrid[getHash(startPoint.x+dx, startPoint.y+dy)] = 0;
+            mapGrid[getHash(goalPoint.x+dx, goalPoint.y+dy)] = 0;
+        }
+      }
+    }
+
+    // --- 混雑シミュレーション (Entropy Generation & Thermal Conduction) ---
+    function initCongestionSources() {
+      congestionSources.length = 0; 
+      for (let i = 0; i < 25; i++) {
+        congestionSources.push({
+          x: 5 + Math.floor(Math.random() * (GRID_SIZE - 10)),
+          y: 5 + Math.floor(Math.random() * (GRID_SIZE - 10)),
+          intensity: 0.7 + Math.random() * 0.8 
+        });
+      }
+    }
+
+    function updateDynamics() {
+      congestionSources.forEach(src => {
+        let rx = src.x + Math.floor(Math.random() * 3 - 1);
+        let ry = src.y + Math.floor(Math.random() * 3 - 1);
+        if(rx > 0 && rx < GRID_SIZE && ry > 0 && ry < GRID_SIZE) {
+            let hash = getHash(rx, ry);
+            if (mapGrid[hash] === 0) { 
+                entropyGrid[hash] = Math.min(1.0, entropyGrid[hash] + 0.1 * src.intensity);
+            }
+        }
+      });
+
+      for (let y = 1; y < GRID_SIZE - 1; y++) {
+        for (let x = 1; x < GRID_SIZE - 1; x++) {
+          let hash = getHash(x, y);
+          
+          if (mapGrid[hash] === 1) {
+              entropyBuffer[hash] = 0; 
+              continue;
+          }
+
+          let sum = entropyGrid[hash]; 
+          let count = 1;
+          
+          const neighbors = [[0,-1], [1,0], [0,1], [-1,0]];
+          for(let n of neighbors) {
+              let nhash = getHash(x+n[0], y+n[1]);
+              if(mapGrid[nhash] === 0) {
+                  sum += entropyGrid[nhash];
+                  count++;
+              }
+          }
+          
+          let avg = sum / count;
+          entropyBuffer[hash] = Math.max(0, avg - 0.002);
+        }
+      }
+
+      let temp = entropyGrid;
+      entropyGrid = entropyBuffer;
+      entropyBuffer = temp;
+    }
+
+    // --- パスファインディング (GDA: Evolution Strategy Switch) ---
+    function findPath(startX, startY, goalX, goalY, strategy) {
+      let openSet = [];
+      let closedSet = new Set();
+      let cameFrom = new Map();
+      let gScore = new Map();
+      let fScore = new Map();
+      
+      let startHash = getHash(startX, startY);
+      gScore.set(startHash, 0);
+      fScore.set(startHash, heuristic(startX, startY, goalX, goalY));
+      
+      openSet.push({ x: startX, y: startY, f: fScore.get(startHash) });
+      
+      const neighbors = [
+          {dx: 0, dy: -1}, {dx: 1, dy: 0}, {dx: 0, dy: 1}, {dx: -1, dy: 0},
+          {dx: 1, dy: -1}, {dx: 1, dy: 1}, {dx: -1, dy: 1}, {dx: -1, dy: -1}
+      ];
+
+      while(openSet.length > 0) {
+        openSet.sort((a, b) => a.f - b.f);
+        let current = openSet.shift();
+        let currHash = getHash(current.x, current.y);
+        
+        if (current.x === goalX && current.y === goalY) {
+            let path = [];
+            let temp = currHash;
+            while(cameFrom.has(temp)) {
+                let p = cameFrom.get(temp);
+                path.push({x: p.x, y: p.y});
+                temp = getHash(p.x, p.y);
+            }
+            path.push({x: startX, y: startY});
+            return path.reverse();
+        }
+        
+        closedSet.add(currHash);
+        
+        for (let n of neighbors) {
+            let nx = current.x + n.dx;
+            let ny = current.y + n.dy;
+            
+            if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+            
+            let nHash = getHash(nx, ny);
+            if (closedSet.has(nHash)) continue;
+            
+            let isWall = mapGrid[nHash] === 1;
+            let entropy = entropyGrid[nHash];
+            
+            let cost = (n.dx !== 0 && n.dy !== 0) ? 1.414 : 1.0;
+            
+            if (strategy === 'LINEAR') {
+                if (isWall) continue;
+                cost += entropy * 2; 
+            } else if (strategy === 'SPIRAL') {
+                if (isWall) {
+                    cost += 15; 
+                } else {
+                    cost += entropy * 50; 
+                }
+            }
+            
+            let tentative_gScore = gScore.get(currHash) + cost;
+            
+            if (!gScore.has(nHash) || tentative_gScore < gScore.get(nHash)) {
+                cameFrom.set(nHash, {x: current.x, y: current.y});
+                gScore.set(nHash, tentative_gScore);
+                fScore.set(nHash, tentative_gScore + heuristic(nx, ny, goalX, goalY));
+                
+                if (!openSet.find(i => i.x === nx && i.y === ny)) {
+                    openSet.push({x: nx, y: ny, f: fScore.get(nHash)});
+                }
+            }
+        }
+      }
+      return []; 
+    }
+
+    function heuristic(x1, y1, x2, y2) {
+      return Math.abs(x1 - x2) + Math.abs(y1 - y2);
+    }
+
+    // --- ルートの予測時間と距離の計算 ---
+    function calculateRouteStats(path) {
+      if (!path || path.length === 0) return { distance: 0, time: 0 };
+      
+      let totalDist = 0;
+      let totalTimeMin = 0; 
+      const speedMperMin = 80; // 通常の歩行速度: 約80m/分
+      
+      for (let i = 1; i < path.length; i++) {
+          let p1 = path[i-1];
+          let p2 = path[i];
+          
+          let dx = Math.abs(p1.x - p2.x);
+          let dy = Math.abs(p1.y - p2.y);
+          let dist = (dx > 0 && dy > 0) ? 14.14 : 10.0; // 1マス10m換算
+          totalDist += dist;
+          
+          let hash = getHash(p2.x, p2.y);
+          let entropy = entropyGrid[hash];
+          let isWall = mapGrid[hash] === 1; // 建物など本来通れない場所
+          
+          let baseTime = dist / speedMperMin;
+          let delayFactor = 1.0;
+          
+          if (entropy > 0) {
+              // 混雑エリア通過時の遅延ペナルティ（最大5倍遅くなる）
+              delayFactor += entropy * 4.0; 
+          }
+          if (isWall) {
+              // 裏道・抜け道を通る手間のペナルティ
+              delayFactor += 2.0; 
+          }
+          
+          totalTimeMin += baseTime * delayFactor;
+      }
+      
+      return {
+          distance: Math.floor(totalDist),
+          time: Math.ceil(totalTimeMin) // 切り上げて表示
+      };
+    }
+
+    // --- メイン描画ループ ---
+    function engineLoop() {
+      updateDynamics(); 
+      drawFrame();      
+      requestAnimationFrame(engineLoop);
+    }
+
+    function drawFrame() {
+      ctx.fillStyle = '#0f172a'; 
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 1. グリッドとエントロピーの描画
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          let hash = getHash(x, y);
+          let px = x * CELL_W;
+          let py = y * CELL_H;
+
+          if (mapGrid[hash] === 1) {
+            ctx.fillStyle = '#1e293b'; 
+            ctx.fillRect(px, py, CELL_W + 0.5, CELL_H + 0.5); 
+            ctx.fillStyle = '#334155'; 
+            ctx.fillRect(px, py, CELL_W + 0.5, 2);
+            ctx.fillRect(px, py, 2, CELL_H + 0.5);
+          } else {
+            let entropy = entropyGrid[hash];
+            if (entropy > 0.05) {
+              let intensity = Math.min(1.0, entropy);
+              ctx.fillStyle = `rgba(239, 68, 68, ${intensity * 0.8})`; 
+              ctx.fillRect(px, py, CELL_W + 0.5, CELL_H + 0.5);
+            }
+          }
+        }
+      }
+
+      // 2. 比較用の通常ルートの描画（ドリルモード時のみ、裏側に描く）
+      if (isDrillMode && normalPath.length > 0) {
+        ctx.beginPath();
+        for (let i = 0; i < normalPath.length; i++) {
+          let p = normalPath[i];
+          let cx = p.x * CELL_W + CELL_W / 2;
+          let cy = p.y * CELL_H + CELL_H / 2;
+          if (i === 0) ctx.moveTo(cx, cy);
+          else ctx.lineTo(cx, cy);
+        }
+        ctx.strokeStyle = '#f59e0b'; // オレンジ
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([5, 5]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // 3. メイン経路の描画
+      if (currentPath.length > 0) {
+        ctx.beginPath();
+        let drawLen = isDrilling ? drillProgress : currentPath.length;
+        
+        for (let i = 0; i < Math.min(currentPath.length, Math.floor(drawLen)); i++) {
+          let p = currentPath[i];
+          let cx = p.x * CELL_W + CELL_W / 2;
+          let cy = p.y * CELL_H + CELL_H / 2;
+          if (i === 0) ctx.moveTo(cx, cy);
+          else ctx.lineTo(cx, cy);
+        }
+
+        if (isDrillMode) {
+          // 回避(ドリル)ルート：エメラルドの実線
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = 4;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.shadowColor = '#34d399';
+          ctx.shadowBlur = 10;
+          ctx.stroke();
+          ctx.shadowBlur = 0; 
+          
+          if (isDrilling) {
+              let headIdx = Math.floor(drillProgress);
+              if (headIdx < currentPath.length) {
+                  let head = currentPath[headIdx];
+                  let headHash = getHash(head.x, head.y);
+                  
+                  if (mapGrid[headHash] === 1) {
+                      mapGrid[headHash] = 0;
+                      createParticles(head.x * CELL_W + CELL_W/2, head.y * CELL_H + CELL_H/2, '#10b981');
+                  }
+                  entropyGrid[headHash] = 0;
+
+                  ctx.fillStyle = '#fff';
+                  ctx.beginPath();
+                  ctx.arc(head.x * CELL_W + CELL_W/2, head.y * CELL_H + CELL_H/2, 4, 0, Math.PI*2);
+                  ctx.fill();
+              }
+
+              drillProgress += 1.5; 
+              // 進行完了時にUIを更新
+              if (drillProgress >= currentPath.length) {
+                  isDrilling = false;
+                  updateUIState('DONE_DRILL', {
+                      normalStats: calculateRouteStats(normalPath),
+                      drillStats: calculateRouteStats(currentPath)
+                  });
+              }
+          }
+        } else {
+          // 通常ルート検索モード：オレンジの点線
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 3;
+          ctx.setLineDash([5, 5]);
+          ctx.stroke();
+          ctx.setLineDash([]); 
+        }
+      }
+
+      // 4. パーティクル
+      for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= 0.05;
+        if (p.life <= 0) {
+            particles.splice(i, 1);
+            continue;
+        }
+        ctx.fillStyle = `rgba(52, 211, 153, ${p.life})`; 
+        ctx.fillRect(p.x, p.y, 2, 2);
+      }
+
+      // 5. スタート・ゴールピン
+      drawPin(startPoint.x, startPoint.y, '#3b82f6', 'S'); 
+      drawPin(goalPoint.x, goalPoint.y, '#ef4444', 'G'); 
+    }
+
+    function drawPin(x, y, color, label) {
+      let cx = x * CELL_W + CELL_W / 2;
+      let cy = y * CELL_H + CELL_H / 2;
+      
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 6, 4, 2, 0, 0, Math.PI*2);
+      ctx.fill();
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#fff';
+      ctx.font = '8px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, cx, cy);
+    }
+
+    function createParticles(x, y, color) {
+        for(let i=0; i<5; i++){
+            particles.push({
+                x: x, y: y,
+                vx: (Math.random() - 0.5) * 4,
+                vy: (Math.random() - 0.5) * 4,
+                life: 1.0
+            });
+        }
+    }
+
+
+    // --- UI Interaction Logic ---
+    function updateUIState(state, data = null) {
+      btnNormal.disabled = false;
+      btnDrill.disabled = false;
+      btnRandomize.disabled = false; 
+      btnDrill.classList.remove('btn-drill-active');
+      statusPanel.className = 'bg-gray-800 border-t border-gray-700/50 p-4 md:px-6 z-10 transition-all duration-300 flex-shrink-0';
+      comparisonDiv.classList.add('hidden'); 
+
+      switch(state) {
+        case 'IDLE':
+          statusIcon.innerHTML = '📍';
+          statusTitle.textContent = '目的地を設定しました';
+          statusDesc.textContent = '下のボタンからルート検索を開始してください。赤いエリアは現在混雑が予想されています。';
+          break;
+          
+        case 'NORMAL_PATH':
+          statusIcon.innerHTML = '⚠️';
+          statusTitle.textContent = '最短ルートを表示中';
+          statusDesc.textContent = 'ルート上に人混みや渋滞が発生しています。通過に時間がかかる可能性があります。';
+          statusPanel.classList.add('bg-orange-900/20');
+          if (data && data.normalStats) {
+              comparisonDiv.classList.remove('hidden');
+              normTimeEl.textContent = data.normalStats.time;
+              normDistEl.textContent = `${data.normalStats.distance} m`;
+              drillTimeEl.textContent = '--';
+              drillDistEl.textContent = '-- m';
+          }
+          break;
+          
+        case 'ANALYZING':
+          statusIcon.innerHTML = '<span class="loader"></span>';
+          statusTitle.textContent = 'AIが周辺空間を解析中...';
+          statusDesc.textContent = '混雑を回避するための、隠れた抜け道や新しいルートを計算しています。';
+          btnNormal.disabled = true;
+          btnDrill.disabled = true;
+          btnRandomize.disabled = true; 
+          btnDrill.classList.add('btn-drill-active');
+          statusPanel.classList.add('bg-indigo-900/20');
+          break;
+          
+        case 'DONE_DRILL':
+          statusIcon.innerHTML = '✨';
+          statusTitle.textContent = '快適な新ルートを開拓しました！';
+          
+          if (data && data.normalStats && data.drillStats) {
+              if (data.drillStats.time < data.normalStats.time) {
+                  statusDesc.textContent = 'AIが混雑を避ける裏道を見つけ出しました。距離は遠回りになりますが、結果的に早く到着できます。';
+              } else if (data.drillStats.time === data.normalStats.time) {
+                  statusDesc.textContent = 'AIが混雑を避ける裏道を見つけ出しました。距離は遠回りになりますが、同じ時間で到着できます。';
+              } else {
+                  statusDesc.textContent = 'AIが混雑を避ける裏道を見つけ出しました。少し時間はかかりますが、混雑を避けて快適に移動できます。';
+              }
+              
+              statusPanel.classList.add('bg-emerald-900/20');
+              comparisonDiv.classList.remove('hidden');
+              normTimeEl.textContent = data.normalStats.time;
+              normDistEl.textContent = `${data.normalStats.distance} m`;
+              drillTimeEl.textContent = data.drillStats.time;
+              drillDistEl.textContent = `${data.drillStats.distance} m`;
+          } else {
+              statusDesc.textContent = 'AIが混雑を避ける裏道を見つけ出しました。';
+              statusPanel.classList.add('bg-emerald-900/20');
+          }
+          break;
+      }
+    }
+
+    btnNormal.addEventListener('click', () => {
+      isDrilling = false;
+      isDrillMode = false;
+      normalPath = []; 
+      if (analyzeTimeout) clearTimeout(analyzeTimeout);
+      
+      currentPath = findPath(startPoint.x, startPoint.y, goalPoint.x, goalPoint.y, 'LINEAR');
+      updateUIState('NORMAL_PATH', { 
+          normalStats: calculateRouteStats(currentPath)
+      });
+    });
+
+    btnDrill.addEventListener('click', () => {
+      updateUIState('ANALYZING');
+      currentPath = []; 
+      normalPath = [];
+      isDrillMode = true;
+      if (analyzeTimeout) clearTimeout(analyzeTimeout);
+      
+      analyzeTimeout = setTimeout(() => {
+        normalPath = findPath(startPoint.x, startPoint.y, goalPoint.x, goalPoint.y, 'LINEAR');
+        currentPath = findPath(startPoint.x, startPoint.y, goalPoint.x, goalPoint.y, 'SPIRAL');
+        
+        drillProgress = 0;
+        isDrilling = true;
+      }, 800);
+    });
+
+    btnRandomize.addEventListener('click', () => {
+      isDrilling = false;
+      isDrillMode = false;
+      if (analyzeTimeout) clearTimeout(analyzeTimeout);
+      
+      currentPath = [];
+      normalPath = [];
+      particles = [];
+      
+      entropyGrid.fill(0);
+      entropyBuffer.fill(0);
+
+      generateCityScape();
+      initCongestionSources();
+      
+      updateUIState('IDLE');
+    });
+
+    canvas.addEventListener('click', (e) => {
+        if(isDrilling) return; 
+        
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+        
+        const gx = Math.floor(x / CELL_W);
+        const gy = Math.floor(y / CELL_H);
+        
+        if(gx >= 0 && gx < GRID_SIZE && gy >= 0 && gy < GRID_SIZE) {
+            goalPoint = {x: gx, y: gy};
+            mapGrid[getHash(gx, gy)] = 0;
+            currentPath = [];
+            normalPath = [];
+            updateUIState('IDLE');
+        }
+    });
+
+    // Boot
+    initSystem();
+
+  </script>
+</body>
+</html>
