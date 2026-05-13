@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NextGen Security Shield - Network Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Noto+Sans+JP:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #050b14;
+            color: #e2e8f0;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tech-font {
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+        }
+
+        .status-pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(56, 189, 248, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+        }
+
+        .alert-pulse {
+            animation: alertPulse 1s infinite;
+        }
+
+        @keyframes alertPulse {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+            70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.5);
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(56, 189, 248, 0.5);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen">
+
+    <!-- Header -->
+    <header id="main-header" class="glass-panel px-6 py-4 flex justify-between items-center z-10 transition-opacity duration-300">
+        <div class="flex items-center gap-3">
+            <div id="system-status-indicator" class="w-4 h-4 rounded-full bg-sky-400 status-pulse"></div>
+            <h1 class="text-xl font-bold tracking-wider text-sky-100">🛡️ NextGen Security Shield <span class="text-sm font-normal text-sky-400 tech-font ml-2">v3.0.2-AAIMA-Core</span></h1>
+        </div>
+        <div class="flex gap-6 text-sm">
+            <div class="flex flex-col items-end">
+                <span class="text-gray-400">システムステータス</span>
+                <span id="ui-status-text" class="text-sky-400 font-bold tracking-widest">正常・監視中</span>
+            </div>
+            <div class="flex flex-col items-end">
+                <span class="text-gray-400">ネットワーク全体健全性</span>
+                <span id="ui-health-text" class="text-green-400 font-bold tech-font text-lg">100.0%</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex overflow-hidden relative">
+        
+        <!-- Canvas Layer -->
+        <canvas id="network-canvas" class="absolute inset-0 w-full h-full z-0"></canvas>
+
+        <!-- UI Overlay: Right Panel -->
+        <div id="right-panel" class="absolute right-4 top-4 bottom-4 w-80 flex flex-col gap-4 z-10 transition-opacity duration-300">
+            
+            <!-- Dashboard Stats -->
+            <div class="glass-panel rounded-lg p-5 flex flex-col gap-4">
+                <h2 class="text-sm text-gray-400 border-b border-gray-700 pb-2">防衛ダッシュボード</h2>
+                
+                <div class="flex justify-between items-center">
+                    <span class="text-sm">監視中デバイス</span>
+                    <span id="ui-nodes-count" class="tech-font text-lg text-sky-300">0</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-sm text-red-300" title="同化され、周囲を攻撃しているデバイス">敵対化デバイス</span>
+                    <span id="ui-compromised-count" class="tech-font text-lg text-red-500 font-bold">0</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-sm">ブロックした攻撃</span>
+                    <span id="ui-blocks-count" class="tech-font text-lg text-green-400">0</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-sm text-yellow-300" title="被害拡大を防ぐため自律的にネットワークから離脱したデバイス">フェイルセーフ発動(自律隔離)</span>
+                    <span id="ui-isolated-count" class="tech-font text-lg text-yellow-400">0</span>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="glass-panel rounded-lg p-5 flex flex-col gap-3">
+                <h2 class="text-sm text-gray-400 border-b border-gray-700 pb-2">防衛モード</h2>
+                <div class="flex gap-2 mb-2">
+                    <button id="btn-mode-aaima" class="flex-1 py-2 bg-sky-900 border border-sky-500 text-sky-100 rounded text-xs transition-colors shadow-[0_0_10px_rgba(56,189,248,0.3)]">AAIMA (次世代)</button>
+                    <button id="btn-mode-legacy" class="flex-1 py-2 bg-slate-800 border border-slate-600 text-slate-400 rounded text-xs transition-colors hover:bg-slate-700">従来型FW</button>
+                </div>
+
+                <h2 class="text-sm text-gray-400 border-b border-gray-700 pb-2 mt-2">シミュレーション制御</h2>
+                <button id="btn-attack" class="w-full py-2 bg-red-900/50 hover:bg-red-700/70 border border-red-500/50 text-red-100 rounded transition-colors duration-200 flex justify-center items-center gap-2">
+                    <span>⚠️ 疑似攻撃テスト実行</span>
+                </button>
+                <button id="btn-reset" class="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 rounded transition-colors duration-200 text-sm mt-2">
+                    🔄 リセット (初期化)
+                </button>
+                
+                <button id="btn-show-info" class="w-full py-2 mt-2 bg-sky-900/40 hover:bg-sky-700/60 border border-sky-500/50 text-sky-200 rounded transition-colors duration-200 flex justify-center items-center gap-2 text-xs">
+                    <span>ℹ️ システムの仕組み (AAIMA vs 従来型)</span>
+                </button>
+            </div>
+
+            <!-- Logs -->
+            <div class="glass-panel rounded-lg p-4 flex-1 flex flex-col min-h-0">
+                <h2 class="text-sm text-gray-400 border-b border-gray-700 pb-2 mb-2">セキュリティログ</h2>
+                <div id="log-container" class="flex-1 overflow-y-auto flex flex-col gap-1 text-xs tech-font custom-scrollbar">
+                    <!-- Logs will be injected here -->
+                </div>
+            </div>
+
+        </div>
+
+        <!-- UI Toggle Button -->
+        <button id="btn-toggle-ui" class="absolute bottom-4 left-4 z-50 p-2 bg-slate-800/80 hover:bg-slate-700 border border-slate-600 text-slate-300 rounded transition-colors backdrop-blur text-sm flex items-center gap-2 shadow-[0_0_10px_rgba(0,0,0,0.5)]">
+            <span>👁️</span> <span id="toggle-text">UI非表示</span>
+        </button>
+
+        <!-- Information Modal -->
+        <div id="info-modal" class="hidden fixed inset-0 z-[100] flex justify-center items-center bg-black/70 backdrop-blur-sm transition-opacity duration-300 opacity-0">
+            <div class="glass-panel w-11/12 max-w-2xl max-h-[85vh] rounded-xl p-6 flex flex-col gap-4 overflow-hidden relative transform scale-95 transition-transform duration-300 shadow-[0_0_30px_rgba(56,189,248,0.2)]">
+                
+                <div class="flex justify-between items-center border-b border-gray-700 pb-3 shrink-0">
+                    <h2 class="text-xl font-bold text-sky-300 flex items-center gap-2">
+                        <span>🛡️</span> 防衛システムの仕組み <span class="text-sm font-normal text-gray-400 mt-1">(AAIMA vs 従来型FW)</span>
+                    </h2>
+                    <button id="btn-close-info" class="text-gray-400 hover:text-white text-3xl leading-none">&times;</button>
+                </div>
+                
+                <div class="overflow-y-auto pr-3 text-sm text-gray-200 flex flex-col gap-6 pb-4 custom-scrollbar">
+                    
+                    <section>
+                        <h3 class="text-red-400 font-bold mb-2 text-base border-l-4 border-red-500 pl-3">1. 未知の脅威「同化プローブ」とは？</h3>
+                        <div class="bg-red-900/20 p-3 rounded border border-red-500/30">
+                            <p class="leading-relaxed">
+                                本シミュレーションで発生する赤い攻撃は、単にデータを壊すだけのウイルスではありません。デバイスの内部に入り込み、完全に<strong>「自分たちの仲間（攻撃者）に乗っ取ってしまう」</strong>非常に高度な攻撃です。<br>
+                                乗っ取られたデバイス（赤色）は、今度は自分自身が周囲の正常なデバイスに向かって次々と攻撃を放ち始めます（感染爆発）。
+                            </p>
+                        </div>
+                    </section>
+        
+                    <section>
+                        <h3 class="text-yellow-400 font-bold mb-2 text-base border-l-4 border-yellow-500 pl-3">2. 従来型ファイアウォール（FW）の弱点</h3>
+                        <p class="leading-relaxed mb-2 text-gray-300">
+                            過去のウイルスリスト（ブラックリスト）と照らし合わせて防ぐ、従来からある防衛方法です。
+                        </p>
+                        <ul class="list-disc pl-5 space-y-2 text-gray-300 bg-slate-800/50 p-3 rounded">
+                            <li>リストにない<strong>未知の攻撃（同化プローブ）はほとんど防ぐことができず、素通り</strong>させてしまいます。</li>
+                            <li><strong>最大の弱点：</strong> 自分のデバイスが乗っ取られたことに気づけません。そのため、乗っ取られたデバイスが新たな攻撃の拠点となってしまい、あっという間にネットワーク全体が赤く染まって崩壊してしまいます。</li>
+                        </ul>
+                    </section>
+        
+                    <section>
+                        <h3 class="text-green-400 font-bold mb-2 text-base border-l-4 border-green-500 pl-3">3. 次世代型「AAIMA（アイマ）」の強み</h3>
+                        <p class="leading-relaxed mb-2 text-gray-300">
+                            最新の「ゼロ知識証明（ZKP）」という技術を使い、内部の情報を一切渡さずに「自分は正常だ」と証明することで攻撃を弾き返します（緑の波紋エフェクト）。しかし、AAIMAの本当の強さは別にあります。
+                        </p>
+                        <ul class="list-none space-y-3 text-gray-300">
+                            <li class="bg-sky-900/20 p-3 rounded border border-sky-500/30">
+                                <strong class="text-sky-300 block mb-1">【最大の強み：自律隔離（トカゲの尻尾切り）】</strong>
+                                万が一、防御を突破されてデバイスが乗っ取られそうになっても、AAIMAはデバイス自身に危険を察知させます。完全に手遅れになって周囲を攻撃し始める前に、<strong>自らネットワークの通信コードを引き抜き、データを消去して沈黙します（黄色く光り、線が消える）。</strong>
+                            </li>
+                            <li class="bg-green-900/20 p-3 rounded border border-green-500/30">
+                                <strong class="text-green-300 block mb-1">【結果】</strong>
+                                一つのデバイスが犠牲になることは防げませんが、それが新たな攻撃拠点になることを防ぐため、<strong>被害の連鎖（感染爆発）を確実に食い止め、ネットワーク全体を守り抜く</strong>ことができます。
+                            </li>
+                        </ul>
+                    </section>
+        
+                </div>
+                
+                <div class="shrink-0 mt-2 pt-4 border-t border-gray-700 text-center">
+                    <button id="btn-close-info-bottom" class="px-8 py-2 bg-sky-700 hover:bg-sky-600 border border-sky-400 text-white font-bold rounded transition-colors duration-200 shadow-[0_0_15px_rgba(56,189,248,0.4)]">
+                        シミュレーションに戻る
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        /**
+         * =====================================================================
+         * 内部ロジック (UCD-F_ABC & AAIMA 準拠 - カスケード故障防止特化版)
+         * =====================================================================
+         */
+
+        // UCD-F_ABC: 32bitビットパッキングを想定した状態フラグ (0-3bitを使用)
+        const AGENT_STATE = {
+            FLAG_ACTIVE:       1 << 0, // 正常稼働
+            FLAG_COMPROMISED:  1 << 1, // 完全同化（フェストゥム化）-> 周囲を攻撃し始める
+            FLAG_ISOLATED:     1 << 2, // 自律的または強制的なネットワーク切断・暗号的消去（無害化）
+        };
+
+        const AAIMA_CONFIG = {
+            THETA_AYT: 0.6,
+            PHI_FAILSAFE_THRESHOLD: 0.25, // Φがこの値を下回ると自律的フェイルセーフ起動（同化を回避）
+            MAX_RUIN: 100,
+            ZKP_DEFENSE_RATE: 0.85 // Φが最大時のZKP成功率
+        };
+
+        let stats = { nodes: 0, compromised: 0, blocks: 0, isolated: 0 };
+        let currentDefenseMode = 'AAIMA';
+        let attackInterval = null; // 攻撃ループ管理用
+
+        class UCDF_Node {
+            constructor(id, x, y) {
+                this.id = id;
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 0.5;
+                this.vy = (Math.random() - 0.5) * 0.5;
+                
+                // UCD-F_ABC 状態管理ビット列(擬似)
+                this.stateRaw = AGENT_STATE.FLAG_ACTIVE; 
+                this.ruinScore = 0; // 同化プローブによるダメージ蓄積
+                
+                this.radius = 4;
+                this.pulseRadius = 0;
+                this.defenseEffect = 0;
+            }
+
+            get phi() {
+                // 統合情報量Φ：ダメージを受けるほど因果構造が破壊され低下する
+                return Math.max(0, 1.0 - (this.ruinScore / AAIMA_CONFIG.MAX_RUIN));
+            }
+
+            get isActive() { return (this.stateRaw & AGENT_STATE.FLAG_ACTIVE) !== 0; }
+            get isCompromised() { return (this.stateRaw & AGENT_STATE.FLAG_COMPROMISED) !== 0; }
+            get isIsolated() { return (this.stateRaw & AGENT_STATE.FLAG_ISOLATED) !== 0; }
+
+            /**
+             * AAIMA フェーズ2,3,4: 「Are you there?」同化プローブの処理
+             */
+            receiveProbe(intensity) {
+                // 既に切断済み、または敵対化済みの場合は処理しない
+                if (this.isIsolated || this.isCompromised) return { defended: false, failsafeTriggered: false };
+
+                const riskScore = intensity * Math.random();
+
+                if (currentDefenseMode === 'AAIMA') {
+                    // --- [AAIMA 防衛モード] ---
+                    // KLダイバージェンスによる情報漏洩の推定とZKPによる防御
+                    if (riskScore > AAIMA_CONFIG.THETA_AYT) {
+                        // Φが高いほどZKP（存在証明）が強固に働く
+                        const currentDefensePower = AAIMA_CONFIG.ZKP_DEFENSE_RATE * this.phi;
+
+                        if (Math.random() < currentDefensePower) {
+                            // 【防御成功】 ZKPによる擬似応答で情報を隠蔽
+                            this.defenseEffect = 1.0;
+                            stats.blocks++;
+                            if(Math.random() < 0.2) logEvent(`[AAIMA] デバイス[${this.id}]：ZKP(存在証明)によるプローブ反射に成功。`, 'success');
+                            return { defended: true, failsafeTriggered: false };
+                        } else {
+                            // 【防御失敗】 ダメージ蓄積（因果構造の破壊）
+                            this.ruinScore += 30;
+                            
+                            // AAIMA フェーズ4：カスケード故障の防止（自己検知と自律切断）
+                            if (this.phi <= AAIMA_CONFIG.PHI_FAILSAFE_THRESHOLD) {
+                                // 完全な同化（乗っ取り）を防ぐため、自らネットワークから切断しデータ消去
+                                this.triggerFailsafe();
+                                return { defended: false, failsafeTriggered: true };
+                            } else {
+                                if(Math.random() < 0.3) logEvent(`[AAIMA] デバイス[${this.id}]：プローブ侵入。自己同一性(Φ)が低下中 (${Math.floor(this.phi*100)}%)`, 'warning');
+                            }
+                        }
+                    }
+                } else {
+                    // --- [従来型FW モード] ---
+                    // 単純なパターンマッチング。高度な「同化プローブ」にはほぼ無力。
+                    if (Math.random() < 0.1) { 
+                        this.defenseEffect = 0.5;
+                        stats.blocks++;
+                        return { defended: true, failsafeTriggered: false };
+                    } else {
+                        // 防御失敗：自律切断の概念がないため、限界までダメージを受けると「敵対化」する
+                        this.ruinScore += 45;
+                        if (this.phi <= 0) {
+                            // 完全な同化（乗っ取り完了）
+                            this.stateRaw = AGENT_STATE.FLAG_COMPROMISED;
+                            stats.compromised++;
+                            logEvent(`[従来型FW] デバイス[${this.id}]：完全に同化されました。攻撃元として活動を開始。`, 'error');
+                        }
+                    }
+                }
+                return { defended: false, failsafeTriggered: false };
+            }
+
+            /**
+             * AAIMA フェーズ4：自律的な物理・論理的離脱（暗号的消去）
+             */
+            triggerFailsafe() {
+                // 乗っ取られて敵の攻撃起点になる前に、システムをシャットダウン
+                this.stateRaw = AGENT_STATE.FLAG_ISOLATED;
+                this.ruinScore = 0; // 状態クリア
+                stats.isolated++;
+                logEvent(`[AAIMA Failsafe] デバイス[${this.id}]が自己の危機を検知。乗っ取りを防ぐため自律的にネットワークから切断し、データを消去しました。`, 'warning');
+            }
+
+            update(width, height) {
+                // 隔離済みのノードは物理演算を停止（地形化）
+                if (this.isIsolated) return;
+                
+                this.x += this.vx;
+                this.y += this.vy;
+                if (this.x < 0 || this.x > width) this.vx *= -1;
+                if (this.y < 0 || this.y > height) this.vy *= -1;
+                
+                if (this.defenseEffect > 0) this.defenseEffect -= 0.05;
+                if (this.isCompromised) {
+                    this.pulseRadius = (this.pulseRadius + 0.5) % 20;
+                }
+            }
+        }
+
+        // 通信パケット / プローブ
+        const PROBE_TYPE = {
+            NORMAL: 0,
+            ATTACK: 1, // フェストゥム化ノードからの「Are you there?」
+            WARNING: 2 // フェイルセーフ発動時の「I am compromised」ブロードキャスト
+        };
+
+        class Probe {
+            constructor(sourceId, targetId, startX, startY, endX, endY, type) {
+                this.sourceId = sourceId;
+                this.targetId = targetId;
+                this.x = startX;
+                this.y = startY;
+                this.endX = endX;
+                this.endY = endY;
+                this.progress = 0;
+                this.speed = (type === PROBE_TYPE.WARNING) ? 0.06 : (0.02 + Math.random() * 0.02);
+                this.type = type;
+                this.completed = false;
+            }
+
+            update() {
+                this.progress += this.speed;
+                if (this.progress >= 1.0) {
+                    this.progress = 1.0;
+                    this.completed = true;
+                }
+                this.x = this.x + (this.endX - this.x) * this.progress;
+                this.y = this.y + (this.endY - this.y) * this.progress;
+            }
+        }
+
+        const canvas = document.getElementById('network-canvas');
+        const ctx = canvas.getContext('2d');
+        let nodes = [];
+        let edges = [];
+        let probes = [];
+        let isAttacking = false;
+        let animationId;
+
+        const uiNodesCount = document.getElementById('ui-nodes-count');
+        const uiCompromisedCount = document.getElementById('ui-compromised-count');
+        const uiBlocksCount = document.getElementById('ui-blocks-count');
+        const uiIsolatedCount = document.getElementById('ui-isolated-count');
+        const logContainer = document.getElementById('log-container');
+        const statusIndicator = document.getElementById('system-status-indicator');
+        const uiStatusText = document.getElementById('ui-status-text');
+        const uiHealthText = document.getElementById('ui-health-text');
+
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+        }
+
+        function initSimulation() {
+            // 前の攻撃インターバルが残っていればクリア
+            if (attackInterval) {
+                clearInterval(attackInterval);
+                attackInterval = null;
+            }
+
+            resizeCanvas();
+            nodes = [];
+            edges = [];
+            probes = [];
+            stats = { nodes: 0, compromised: 0, blocks: 0, isolated: 0 };
+            isAttacking = false;
+            logContainer.innerHTML = '';
+            
+            setStatus('normal');
+            logEvent("システム起動。ネットワークトポロジの初期化を完了。", "info");
+
+            const numNodes = 100;
+            stats.nodes = numNodes;
+            const maxDistance = 150;
+
+            for (let i = 0; i < numNodes; i++) {
+                nodes.push(new UCDF_Node(i, Math.random() * canvas.width, Math.random() * canvas.height));
+            }
+
+            // 孤立したノードを作らず、ネットワーク全体が繋がるように構築
+            // 1. まず全てのノードを一繋ぎのリング状にして連結成分を1つにする
+            const shuffledIndices = [...Array(numNodes).keys()].sort(() => Math.random() - 0.5);
+            for (let i = 0; i < numNodes - 1; i++) {
+                edges.push({ source: shuffledIndices[i], target: shuffledIndices[i+1] });
+            }
+            edges.push({ source: shuffledIndices[numNodes - 1], target: shuffledIndices[0] });
+
+            // 2. さらに距離が近いノード同士を確実に接続（密なネットワークにする）
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const dx = nodes[i].x - nodes[j].x;
+                    const dy = nodes[i].y - nodes[j].y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (dist < maxDistance) {
+                        // 既にリングで繋がっているか確認し、重複を防ぐ
+                        const alreadyConnected = edges.some(e => 
+                            (e.source === i && e.target === j) || (e.source === j && e.target === i)
+                        );
+                        if (!alreadyConnected) {
+                            edges.push({ source: i, target: j });
+                        }
+                    }
+                }
+            }
+            
+            updateUI();
+            logEvent(`防衛プロトコル [${currentDefenseMode}] : Active`, "success");
+        }
+
+        // エッジ（接続）の動的切断
+        function removeEdgesForNode(nodeId) {
+            edges = edges.filter(e => e.source !== nodeId && e.target !== nodeId);
+        }
+
+        // 警告パケットのブロードキャスト
+        function broadcastWarning(sourceNode) {
+            const connectedEdges = edges.filter(e => e.source === sourceNode.id || e.target === sourceNode.id);
+            connectedEdges.forEach(e => {
+                const targetId = e.source === sourceNode.id ? e.target : e.source;
+                const targetNode = nodes[targetId];
+                probes.push(new Probe(sourceNode.id, targetId, sourceNode.x, sourceNode.y, targetNode.x, targetNode.y, PROBE_TYPE.WARNING));
+            });
+        }
+
+        function triggerAttack() {
+            if (isAttacking) return;
+            isAttacking = true;
+            setStatus('alert');
+            logEvent("⚠️ 外部からの未知の高度なプローブ攻撃を検知！", "error");
+
+            const activeNodes = nodes.filter(n => n.isActive);
+            if (activeNodes.length === 0) return;
+            
+            // 最初の侵入者（ペイロード・インジェクション）
+            const attacker = activeNodes[Math.floor(Math.random() * activeNodes.length)];
+            attacker.stateRaw = AGENT_STATE.FLAG_COMPROMISED;
+            stats.compromised++;
+            
+            logEvent(`不明なソースがデバイス[${attacker.id}]を突破し、完全同化しました。内部からの攻撃(横展開)を開始。`, "error");
+
+            attackInterval = setInterval(() => {
+                const compromisedNodes = nodes.filter(n => n.isCompromised);
+                
+                // 全ての敵対ノードが駆逐、または攻撃対象が居なくなった場合
+                if (compromisedNodes.length === 0 || nodes.filter(n=>n.isActive).length === 0) {
+                    clearInterval(attackInterval);
+                    attackInterval = null;
+                    isAttacking = false;
+                    setStatus('normal');
+                    logEvent("シミュレーション終了。ネットワーク上のアクティブな脅威活動が停止しました。", "success");
+                    return;
+                }
+
+                // 「同化されたノード」がフェストゥムとして周囲に「Are you there?」を放つ
+                compromisedNodes.forEach(attackerNode => {
+                    const connectedEdges = edges.filter(e => e.source === attackerNode.id || e.target === attackerNode.id);
+                    connectedEdges.forEach(e => {
+                        const targetId = e.source === attackerNode.id ? e.target : e.source;
+                        const targetNode = nodes[targetId];
+
+                        // 健全なノードを狙う
+                        if (targetNode.isActive && Math.random() > 0.4) {
+                            probes.push(new Probe(
+                                attackerNode.id, targetId,
+                                attackerNode.x, attackerNode.y,
+                                targetNode.x, targetNode.y,
+                                PROBE_TYPE.ATTACK
+                            ));
+                        }
+                    });
+                });
+
+            }, 600);
+        }
+
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            nodes.forEach(node => node.update(canvas.width, canvas.height));
+
+            // エッジ描画
+            ctx.lineWidth = 1;
+            edges.forEach(edge => {
+                const n1 = nodes[edge.source];
+                const n2 = nodes[edge.target];
+
+                ctx.beginPath();
+                ctx.moveTo(n1.x, n1.y);
+                ctx.lineTo(n2.x, n2.y);
+                
+                if (n1.isCompromised || n2.isCompromised) {
+                    ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'; // 敵対化ノードの接続は赤
+                } else {
+                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)'; // 正常
+                }
+                ctx.stroke();
+            });
+
+            // プローブ描画と到達判定
+            for (let i = probes.length - 1; i >= 0; i--) {
+                const p = probes[i];
+                p.update();
+
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.type === PROBE_TYPE.WARNING ? 3 : 2, 0, Math.PI * 2);
+                
+                if (p.type === PROBE_TYPE.ATTACK) {
+                    ctx.fillStyle = '#ef4444'; // 赤 (同化プローブ)
+                    ctx.shadowBlur = 10; ctx.shadowColor = '#ef4444';
+                } else if (p.type === PROBE_TYPE.WARNING) {
+                    ctx.fillStyle = '#facc15'; // 黄 (警告/切断通知)
+                    ctx.shadowBlur = 8; ctx.shadowColor = '#facc15';
+                } else {
+                    ctx.fillStyle = '#38bdf8';
+                    ctx.shadowBlur = 5; ctx.shadowColor = '#38bdf8';
+                }
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                if (p.completed) {
+                    const targetNode = nodes[p.targetId];
+                    
+                    if (p.type === PROBE_TYPE.ATTACK) {
+                        const result = targetNode.receiveProbe(1.0);
+                        
+                        // ZKP防御エフェクト
+                        if (result.defended) {
+                            ctx.beginPath();
+                            ctx.arc(targetNode.x, targetNode.y, 15, 0, Math.PI * 2);
+                            ctx.strokeStyle = '#4ade80';
+                            ctx.lineWidth = 2;
+                            ctx.stroke();
+                        }
+                        
+                        // フェイルセーフ発動時の処理
+                        if (result.failsafeTriggered) {
+                            broadcastWarning(targetNode);
+                            removeEdgesForNode(targetNode.id); // トポロジから切断
+                            updateUI();
+                        }
+                    } 
+                    else if (p.type === PROBE_TYPE.WARNING && targetNode.isActive) {
+                        // 警告を受け取った健全なノードのエフェクト（防衛体制強化など）
+                        ctx.beginPath();
+                        ctx.arc(targetNode.x, targetNode.y, 8, 0, Math.PI * 2);
+                        ctx.strokeStyle = '#facc15';
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    }
+                    probes.splice(i, 1);
+                }
+            }
+
+            // ノード描画
+            nodes.forEach(node => {
+                ctx.beginPath();
+                
+                if (node.isIsolated) {
+                    // 自律切断完了（無害な残骸・地形化）
+                    ctx.arc(node.x, node.y, node.radius * 0.8, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(71, 85, 105, 0.4)'; // スレートグレー
+                    ctx.fill();
+                } 
+                else if (node.isCompromised) {
+                    // 完全同化・敵対化（フェストゥム化）
+                    ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = '#ef4444';
+                    ctx.fill();
+                    // 攻撃パルス
+                    ctx.beginPath();
+                    ctx.arc(node.x, node.y, node.radius + node.pulseRadius, 0, Math.PI*2);
+                    ctx.strokeStyle = `rgba(239, 68, 68, ${1.0 - node.pulseRadius/20})`;
+                    ctx.stroke();
+                } 
+                else {
+                    // 正常稼働中
+                    ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+                    const alpha = 0.4 + (node.phi * 0.6); // ダメージで暗くなる
+                    ctx.fillStyle = `rgba(56, 189, 248, ${alpha})`;
+                    ctx.fill();
+
+                    // 防御エフェクト
+                    if (node.defenseEffect > 0) {
+                        ctx.beginPath();
+                        ctx.arc(node.x, node.y, node.radius + (1 - node.defenseEffect) * 12, 0, Math.PI * 2);
+                        ctx.strokeStyle = `rgba(74, 222, 128, ${node.defenseEffect})`;
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
+                }
+            });
+
+            // ネットワーク健全性の計算
+            let totalPhi = 0;
+            let countForHealth = 0;
+            nodes.forEach(n => {
+                if (!n.isIsolated) {
+                    // 敵対化ノードはPhi=0として計算に含める（全体を押し下げる）
+                    totalPhi += n.isCompromised ? 0 : n.phi;
+                    countForHealth++;
+                }
+            });
+            const avgPhi = countForHealth > 0 ? (totalPhi / countForHealth) : 0;
+            uiHealthText.innerText = (avgPhi * 100).toFixed(1) + "%";
+
+            if (avgPhi > 0.8) uiHealthText.className = "text-green-400 font-bold tech-font text-lg";
+            else if (avgPhi > 0.5) uiHealthText.className = "text-yellow-400 font-bold tech-font text-lg";
+            else uiHealthText.className = "text-red-400 font-bold tech-font text-lg";
+
+            updateUI();
+            animationId = requestAnimationFrame(render);
+        }
+
+        function updateUI() {
+            uiNodesCount.innerText = nodes.filter(n => n.isActive).length;
+            uiCompromisedCount.innerText = stats.compromised;
+            uiBlocksCount.innerText = stats.blocks;
+            uiIsolatedCount.innerText = stats.isolated;
+        }
+
+        function logEvent(message, type = 'info') {
+            const el = document.createElement('div');
+            const time = new Date().toLocaleTimeString('ja-JP', { hour12: false });
+            
+            let colorClass = 'text-gray-300';
+            if (type === 'error') colorClass = 'text-red-400';
+            if (type === 'warning') colorClass = 'text-yellow-400';
+            if (type === 'success') colorClass = 'text-green-400';
+
+            el.className = `py-1 border-b border-gray-800 ${colorClass}`;
+            el.innerHTML = `<span class="text-gray-500 mr-2">[${time}]</span> ${message}`;
+            
+            logContainer.appendChild(el);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function setStatus(status) {
+            if (status === 'normal') {
+                statusIndicator.className = 'w-4 h-4 rounded-full bg-sky-400 status-pulse';
+                uiStatusText.innerText = '正常・監視中';
+                uiStatusText.className = 'text-sky-400 font-bold tracking-widest';
+            } else if (status === 'alert') {
+                statusIndicator.className = 'w-4 h-4 rounded-full bg-red-500 alert-pulse';
+                uiStatusText.innerText = '脅威検知・防衛中';
+                uiStatusText.className = 'text-red-500 font-bold tracking-widest alert-pulse';
+            }
+        }
+
+        // --- Event Listeners ---
+        window.addEventListener('resize', resizeCanvas);
+        
+        document.getElementById('btn-mode-aaima').addEventListener('click', (e) => {
+            currentDefenseMode = 'AAIMA';
+            e.target.className = 'flex-1 py-2 bg-sky-900 border border-sky-500 text-sky-100 rounded text-xs transition-colors shadow-[0_0_10px_rgba(56,189,248,0.3)]';
+            document.getElementById('btn-mode-legacy').className = 'flex-1 py-2 bg-slate-800 border border-slate-600 text-slate-400 rounded text-xs transition-colors hover:bg-slate-700';
+            logEvent("防衛システムを【AAIMA (次世代耐同化プロトコル)】に切り替えました。カスケード故障防止機能が有効です。", "info");
+        });
+
+        document.getElementById('btn-mode-legacy').addEventListener('click', (e) => {
+            currentDefenseMode = 'LEGACY';
+            e.target.className = 'flex-1 py-2 bg-yellow-900 border border-yellow-500 text-yellow-100 rounded text-xs transition-colors shadow-[0_0_10px_rgba(250,204,21,0.3)]';
+            document.getElementById('btn-mode-aaima').className = 'flex-1 py-2 bg-slate-800 border border-slate-600 text-slate-400 rounded text-xs transition-colors hover:bg-slate-700';
+            logEvent("防衛システムを【従来型FW (シグネチャベース)】に切り替えました。自律隔離機能が無効になります。", "warning");
+        });
+
+        document.getElementById('btn-attack').addEventListener('click', () => {
+            triggerAttack();
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            cancelAnimationFrame(animationId);
+            initSimulation();
+            render();
+        });
+
+        // --- UI Toggle Logic ---
+        const mainHeader = document.getElementById('main-header');
+        const rightPanel = document.getElementById('right-panel');
+        const btnToggleUi = document.getElementById('btn-toggle-ui');
+        let uiVisible = true;
+
+        btnToggleUi.addEventListener('click', () => {
+            uiVisible = !uiVisible;
+            if (uiVisible) {
+                mainHeader.style.opacity = '1';
+                mainHeader.style.pointerEvents = 'auto';
+                rightPanel.style.opacity = '1';
+                rightPanel.style.pointerEvents = 'auto';
+                btnToggleUi.innerHTML = '<span>👁️</span> <span>UI非表示</span>';
+            } else {
+                mainHeader.style.opacity = '0';
+                mainHeader.style.pointerEvents = 'none';
+                rightPanel.style.opacity = '0';
+                rightPanel.style.pointerEvents = 'none';
+                btnToggleUi.innerHTML = '<span>👁️‍🗨️</span> <span>UI表示</span>';
+            }
+        });
+
+        // --- Information Modal Logic ---
+        const infoModal = document.getElementById('info-modal');
+        const modalContent = infoModal.querySelector('.glass-panel');
+        const btnShowInfo = document.getElementById('btn-show-info');
+        const btnCloseInfo = document.getElementById('btn-close-info');
+        const btnCloseInfoBottom = document.getElementById('btn-close-info-bottom');
+
+        function openModal() {
+            infoModal.classList.remove('hidden');
+            requestAnimationFrame(() => {
+                infoModal.classList.remove('opacity-0');
+                modalContent.classList.remove('scale-95');
+                modalContent.classList.add('scale-100');
+            });
+        }
+
+        function closeModal() {
+            infoModal.classList.add('opacity-0');
+            modalContent.classList.remove('scale-100');
+            modalContent.classList.add('scale-95');
+            setTimeout(() => {
+                infoModal.classList.add('hidden');
+            }, 300);
+        }
+
+        btnShowInfo.addEventListener('click', openModal);
+        btnCloseInfo.addEventListener('click', closeModal);
+        btnCloseInfoBottom.addEventListener('click', closeModal);
+
+        infoModal.addEventListener('click', (e) => {
+            if (e.target === infoModal) closeModal();
+        });
+
+        // --- Initialization ---
+        initSimulation();
+        render();
+
+    </script>
+</body>
+</html>
