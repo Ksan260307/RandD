@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UCD-F Tensor Compute Benchmark (WebGPU vs PyTorch)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0a0a0a; color: #d4d4d4; font-family: 'Consolas', 'Courier New', monospace; }
+        .log-container { background-color: #1e1e1e; border: 1px solid #333; height: 400px; overflow-y: auto; padding: 1rem; }
+        .log-line { margin-bottom: 0.5rem; }
+        .log-info { color: #4fc1ff; }
+        .log-success { color: #4ec9b0; }
+        .log-warning { color: #dcdcaa; }
+        .log-error { color: #f44747; }
+        .highlight { color: #c586c0; font-weight: bold; }
+    </style>
+</head>
+<body class="p-8">
+
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-bold mb-2 text-white border-b border-gray-700 pb-4">UCD-F Tensor Compute Benchmark</h1>
+        <p class="text-gray-400 mb-6 text-sm">Target: Pure Matrix Multiplication (FP32) - WebGPU Compute Shader</p>
+
+        <div class="grid grid-cols-3 gap-4 mb-6">
+            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <label class="block text-sm text-gray-400 mb-2">Matrix Size (N x N)</label>
+                <select id="matrixSize" class="w-full bg-gray-900 text-white border border-gray-600 rounded p-2 focus:outline-none focus:border-blue-500">
+                    <option value="1024">1024 x 1024 (Light)</option>
+                    <option value="2048" selected>2048 x 2048 (Standard)</option>
+                    <option value="4096">4096 x 4096 (Heavy - PyTorch range)</option>
+                    <!-- 8192はVRAM要求が厳しいため除外 -->
+                </select>
+            </div>
+            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <label class="block text-sm text-gray-400 mb-2">Iterations</label>
+                <select id="iterations" class="w-full bg-gray-900 text-white border border-gray-600 rounded p-2 focus:outline-none focus:border-blue-500">
+                    <option value="1">1</option>
+                    <option value="5" selected>5</option>
+                    <option value="10">10</option>
+                </select>
+            </div>
+            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 flex items-end">
+                <button id="runBtn" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition duration-200">
+                    Run WebGPU Benchmark
+                </button>
+            </div>
+        </div>
+
+        <div class="mb-2 flex justify-between items-center">
+            <span class="text-sm font-bold text-gray-400">Execution Log (Zero-Allocation Pipeline)</span>
+            <button id="clearBtn" class="text-xs text-gray-500 hover:text-white">Clear Log</button>
+        </div>
+        <div id="logArea" class="log-container rounded-lg shadow-inner text-sm">
+            <div class="log-line text-gray-500">System initialized. Waiting for execution...</div>
+        </div>
+    </div>
+
+    <script>
+        // UCD-F Architecture: Native WGSL Tensor Kernel (Matrix Multiplication)
+        // Uses 16x16 workgroups for optimal L1 cache hitting and occupancy.
+        const matmulWGSL = `
+            struct Uniforms {
+                dimN: u32,
+            };
+
+            @group(0) @binding(0) var<storage, read> matrixA : array<f32>;
+            @group(0) @binding(1) var<storage, read> matrixB : array<f32>;
+            @group(0) @binding(2) var<storage, read_write> matrixC : array<f32>;
+            @group(0) @binding(3) var<uniform> config : Uniforms;
+
+            const WORKGROUP_SIZE = 16u;
+
+            @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE)
+            fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+                let row = global_id.y;
+                let col = global_id.x;
+                let N = config.dimN;
+
+                if (row >= N || col >= N) {
+                    return;
+                }
+
+                var sum: f32 = 0.0;
+                
+                // Pure FP32 Dot Product Loop
+                for (var i: u32 = 0u; i < N; i = i + 1u) {
+                    sum = sum + matrixA[row * N + i] * matrixB[i * N + col];
+                }
+
+                matrixC[row * N + col] = sum;
+            }
+        `;
+
+        // UI Elements
+        const logArea = document.getElementById('logArea');
+        const runBtn = document.getElementById('runBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const sizeSelect = document.getElementById('matrixSize');
+        const iterSelect = document.getElementById('iterations');
+
+        function log(msg, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `log-line log-${type}`;
+            const time = new Date().toISOString().split('T')[1].slice(0, -1);
+            div.innerHTML = `<span class="text-gray-600">[${time}]</span> ${msg}`;
+            logArea.appendChild(div);
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        clearBtn.addEventListener('click', () => {
+            logArea.innerHTML = '';
+        });
+
+        async function runBenchmark() {
+            runBtn.disabled = true;
+            runBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            
+            const N = parseInt(sizeSelect.value);
+            const ITERATIONS = parseInt(iterSelect.value);
+            
+            // Total operations for N x N matrix mult = 2 * N^3
+            const operationsPerRun = 2 * Math.pow(N, 3);
+
+            try {
+                log(`--- Starting UCD-F WebGPU Tensor Benchmark ---`, 'highlight');
+                log(`Target Size: ${N} x ${N} (FP32)`, 'info');
+                log(`Operations per run: ${(operationsPerRun / 1e9).toFixed(2)} Giga-FLOPs`, 'info');
+
+                // 1. Initialize WebGPU
+                if (!navigator.gpu) {
+                    throw new Error("WebGPU is not supported on this browser.");
+                }
+                const adapter = await navigator.gpu.requestAdapter();
+                if (!adapter) {
+                    throw new Error("Failed to request WebGPU adapter.");
+                }
+                const device = await adapter.requestDevice();
+                log(`WebGPU Device acquired: ${adapter.info ? adapter.info.vendor : 'Unknown Vendor'}`, 'success');
+
+                // 2. Data Generation (Zero-Allocation philosophy: Allocate once, reuse)
+                log(`Allocating CPU Buffers (${(N * N * 4 * 3 / 1024 / 1024).toFixed(1)} MB)...`, 'info');
+                
+                const bufferSize = N * N * 4; // 4 bytes per Float32
+                const dataA = new Float32Array(N * N);
+                const dataB = new Float32Array(N * N);
+                
+                // Fill with random data [-1.0, 1.0]
+                for (let i = 0; i < N * N; i++) {
+                    dataA[i] = (Math.random() * 2) - 1.0;
+                    dataB[i] = (Math.random() * 2) - 1.0;
+                }
+                log(`CPU Data initialized.`, 'success');
+
+                // 3. VRAM Allocation
+                log(`Allocating VRAM (Storage Buffers)...`, 'info');
+                const gpuBufferA = device.createBuffer({
+                    size: bufferSize,
+                    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+                });
+                const gpuBufferB = device.createBuffer({
+                    size: bufferSize,
+                    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+                });
+                const gpuBufferC = device.createBuffer({
+                    size: bufferSize,
+                    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+                });
+
+                // Write data to VRAM
+                device.queue.writeBuffer(gpuBufferA, 0, dataA);
+                device.queue.writeBuffer(gpuBufferB, 0, dataB);
+
+                // Uniform Buffer (N)
+                const uniformArray = new Uint32Array([N]);
+                const uniformBuffer = device.createBuffer({
+                    size: 4,
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+                });
+                device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
+
+                // 4. Compute Pipeline Configuration
+                const shaderModule = device.createShaderModule({ code: matmulWGSL });
+                const computePipeline = device.createComputePipeline({
+                    layout: 'auto',
+                    compute: {
+                        module: shaderModule,
+                        entryPoint: 'main'
+                    }
+                });
+
+                const bindGroup = device.createBindGroup({
+                    layout: computePipeline.getBindGroupLayout(0),
+                    entries: [
+                        { binding: 0, resource: { buffer: gpuBufferA } },
+                        { binding: 1, resource: { buffer: gpuBufferB } },
+                        { binding: 2, resource: { buffer: gpuBufferC } },
+                        { binding: 3, resource: { buffer: uniformBuffer } }
+                    ]
+                });
+
+                const workgroupCount = Math.ceil(N / 16);
+
+                // Helper to run one pass
+                async function dispatchPass() {
+                    const commandEncoder = device.createCommandEncoder();
+                    const passEncoder = commandEncoder.beginComputePass();
+                    passEncoder.setPipeline(computePipeline);
+                    passEncoder.setBindGroup(0, bindGroup);
+                    // Dispatch 2D Grid
+                    passEncoder.dispatchWorkgroups(workgroupCount, workgroupCount);
+                    passEncoder.end();
+                    device.queue.submit([commandEncoder.finish()]);
+                    await device.queue.onSubmittedWorkDone();
+                }
+
+                log(`Compiling WGSL Compute Kernel...`, 'info');
+                
+                // Warm-up run (PyTorch also requires this to avoid cold-start overhead)
+                log(`Executing GPU Warm-up...`, 'info');
+                await dispatchPass();
+                log(`Warm-up complete.`, 'success');
+
+                // Benchmark Loop
+                log(`Starting Benchmark (${ITERATIONS} iterations)...`, 'highlight');
+                let totalTimeMs = 0;
+
+                for (let i = 0; i < ITERATIONS; i++) {
+                    const t0 = performance.now();
+                    await dispatchPass();
+                    const t1 = performance.now();
+                    
+                    const duration = t1 - t0;
+                    totalTimeMs += duration;
+                    const gflops = (operationsPerRun / (duration / 1000)) / 1e9;
+                    
+                    log(`  Iter ${i + 1}/${ITERATIONS} : ${duration.toFixed(2)} ms | <span class="highlight">${gflops.toFixed(2)} GFLOPS</span>`);
+                }
+
+                // Results calculation
+                const avgTimeMs = totalTimeMs / ITERATIONS;
+                const avgGflops = (operationsPerRun / (avgTimeMs / 1000)) / 1e9;
+                
+                log(`--- Results ---`, 'highlight');
+                log(`Average Time : <span class="log-success">${avgTimeMs.toFixed(2)} ms</span>`, 'info');
+                log(`Average Power: <span class="log-success font-bold text-lg">${avgGflops.toFixed(2)} GFLOPS</span>`, 'info');
+                log(`Ready for PyTorch comparison.`, 'success');
+
+                // Cleanup
+                gpuBufferA.destroy();
+                gpuBufferB.destroy();
+                gpuBufferC.destroy();
+                uniformBuffer.destroy();
+
+            } catch (err) {
+                log(err.message, 'error');
+            } finally {
+                runBtn.disabled = false;
+                runBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+
+        runBtn.addEventListener('click', runBenchmark);
+    </script>
+</body>
+</html>
