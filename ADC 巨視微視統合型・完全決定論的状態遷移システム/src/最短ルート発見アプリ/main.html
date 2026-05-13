@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>最短ルート発見アプリ</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;600;800&display=swap');
+    body {
+      font-family: 'M PLUS Rounded 1c', sans-serif;
+    }
+    input[type=range] {
+      accent-color: #3b82f6; /* Tailwind blue-500 */
+    }
+  </style>
+</head>
+<body class="bg-sky-50 text-slate-700 min-h-screen py-8 px-4 md:px-8">
+
+  <div class="max-w-5xl mx-auto flex flex-col md:flex-row gap-6">
+    
+    <div class="flex-1 bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-sky-100 flex flex-col">
+      <div class="flex justify-between items-end mb-4 px-2">
+        <div class="flex items-center gap-2">
+          <h2 class="text-xl font-bold text-slate-700">マップ</h2>
+          <!-- リフレッシュボタン -->
+          <button id="btnRefresh" class="text-slate-400 hover:text-blue-500 transition-colors p-1.5 rounded-lg hover:bg-slate-100 active:scale-95" title="画面をリフレッシュ">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+          </button>
+        </div>
+        <span class="text-sm font-semibold text-blue-500 bg-blue-50 px-3 py-1 rounded-full" id="uiStatusText">準備完了</span>
+      </div>
+      
+      <!-- キャンバス（高さ0化を防ぐ強固なラッパー構造） -->
+      <div class="w-full aspect-square relative rounded-2xl bg-slate-50 border-2 border-dashed border-slate-200 overflow-hidden shadow-inner">
+        <canvas id="tspCanvas" class="absolute top-0 left-0 w-full h-full cursor-crosshair"></canvas>
+      </div>
+      <p class="text-center text-xs text-slate-400 mt-3">※キャンバス内は自動的に調整されます</p>
+    </div>
+
+    <div class="w-full md:w-80 flex flex-col gap-4">
+      
+      <!-- ヘッダー・設定 -->
+      <div class="bg-white p-6 rounded-3xl shadow-sm border border-sky-100">
+        <h1 class="text-2xl font-extrabold text-slate-800 mb-2">ルート探しアプリ</h1>
+        <p class="text-slate-500 text-sm mb-6 leading-relaxed">
+          たくさんの都市を一度ずつ訪れて、元の場所に戻る「最短ルート」をAIが一生懸命探します！
+        </p>
+
+        <div class="mb-4">
+          <label class="flex justify-between items-center text-sm font-semibold text-slate-600 mb-2" for="uiCityCount">
+            <span>都市の数 (無制限)</span>
+          </label>
+          <input type="number" id="uiCityCount" min="3" value="30" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow">
+        </div>
+
+        <!-- 探索モード切替 -->
+        <div class="mb-6">
+          <label class="block text-sm font-semibold text-slate-600 mb-2">探索モード</label>
+          <div class="flex bg-slate-100 p-1 rounded-xl">
+            <button id="btnModeAi" class="flex-1 py-2 text-sm font-bold rounded-lg bg-white shadow-sm text-blue-600 transition-all">AI探索</button>
+            <button id="btnModeBrute" class="flex-1 py-2 text-sm font-bold rounded-lg text-slate-500 hover:text-slate-700 transition-all">総当たり</button>
+          </div>
+          
+          <!-- 警告とプログレスバー -->
+          <div id="bruteWarning" class="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-xl hidden">
+            <p class="text-xs leading-relaxed text-rose-600 font-bold mb-1">⚠️ 計算量爆発の警告</p>
+            <p class="text-[11px] leading-relaxed text-rose-500 font-medium" id="uiBruteCalcAmount">
+              現在の都市数では、総計算量は --- 回です。
+            </p>
+          </div>
+        </div>
+
+        <button id="btnGenerate" class="w-full py-3 mb-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl transition-colors duration-200 flex items-center justify-center gap-2">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.242-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+          都市をランダムに配置
+        </button>
+
+        <div class="flex flex-col gap-2">
+          <button id="btnStart" class="w-full py-3 bg-blue-500 hover:bg-blue-600 text-white font-bold rounded-2xl shadow-md shadow-blue-200 transition-all duration-200 active:scale-95">
+            探す！
+          </button>
+          <div class="flex gap-2">
+            <button id="btnStop" class="flex-1 py-3 bg-rose-500 hover:bg-rose-600 text-white font-bold rounded-2xl shadow-md shadow-rose-200 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+              ストップ
+            </button>
+            <button id="btnReset" class="flex-1 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-2xl shadow-sm transition-all duration-200 active:scale-95">
+              リセット
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white p-6 rounded-3xl shadow-sm border border-sky-100 flex-1">
+        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">探索レポート</h3>
+        
+        <div class="flex flex-col gap-4">
+          <div class="bg-slate-50 p-4 rounded-2xl">
+            <span class="block text-xs font-semibold text-slate-500 mb-1">現在の最短距離</span>
+            <span class="text-2xl font-extrabold text-slate-800" id="uiBestDistance">---</span>
+          </div>
+
+          <!-- ベンチマークグラフ -->
+          <div class="bg-slate-50 p-4 rounded-2xl flex flex-col items-center">
+            <div class="flex justify-between items-center w-full mb-2">
+              <span class="text-xs font-semibold text-slate-500">ルート短縮の軌跡（ベンチマーク）</span>
+            </div>
+            <div class="w-full h-24 md:h-32 bg-white rounded-xl border border-slate-200 overflow-hidden relative mb-3">
+              <canvas id="benchmarkCanvas" class="absolute top-0 left-0 w-full h-full"></canvas>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2 w-full">
+              <div class="bg-white border border-slate-100 p-2 rounded-xl flex flex-col items-center justify-center">
+                <span class="text-[10px] font-semibold text-slate-400">検証したルート総数</span>
+                <span class="text-sm font-bold text-slate-700" id="uiEvalCount">0</span>
+              </div>
+              <div class="bg-white border border-slate-100 p-2 rounded-xl flex flex-col items-center justify-center">
+                <span class="text-[10px] font-semibold text-slate-400">計算スピード</span>
+                <span class="text-sm font-bold text-blue-500" id="uiEvalSpeed">0 <span class="text-[10px] font-normal text-slate-400">/秒</span></span>
+              </div>
+              
+              <!-- 総当たりモード用 進捗表示 -->
+              <div id="bruteProgressContainer" class="col-span-2 bg-white border border-slate-100 p-2 rounded-xl flex flex-col items-center justify-center hidden">
+                <div class="flex justify-between w-full px-1">
+                  <span class="text-[10px] font-semibold text-slate-400">探索進捗</span>
+                  <span class="text-[10px] font-semibold text-blue-500" id="uiBruteETA">予想残り時間: ---</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-1.5 mt-1.5 mb-1 overflow-hidden">
+                  <div id="bruteProgressBar" class="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    /** * ==========================================
+     * ADC 巨視微視統合型システム・内部ロジック
+     * 理念に基づく極限最適化（LUT, RCM, IPDF, VIF）実装
+     * ==========================================
+     */
+
+    class ADC_PRNG {
+      constructor(seed) { this.seed = seed >>> 0; }
+      next() {
+        this.seed = (this.seed * 1664525 + 1013904223) >>> 0;
+        return this.seed / 4294967296;
+      }
+      nextInt(min, max) { return Math.floor(this.next() * (max - min + 1)) + min; }
+    }
+
+    const CVM_STATE = {
+      BIRTH: 'birth', GROWTH: 'growth', FULFILLMENT: 'fulfill',
+      DECLINE: 'decline', REST: 'rest'
+    };
+
+    class PathEntity {
+      constructor(order) {
+        this.order = new Int32Array(order); // メモリの連続性を強制
+        this.distance = Infinity;
+        this.intensity = 0;       
+        this.phase = prng.next(); 
+        this.state = 'D';         
+        this.fatigue = 0.0;       
+      }
+    }
+
+    const canvas = document.getElementById('tspCanvas');
+    const ctx = canvas.getContext('2d');
+    const benchCanvas = document.getElementById('benchmarkCanvas');
+    const benchCtx = benchCanvas.getContext('2d');
+    
+    const elCityCount = document.getElementById('uiCityCount');
+    const btnGenerate = document.getElementById('btnGenerate');
+    const btnStart = document.getElementById('btnStart');
+    const btnStop = document.getElementById('btnStop');
+    const btnReset = document.getElementById('btnReset');
+    const btnRefresh = document.getElementById('btnRefresh');
+    
+    const btnModeAi = document.getElementById('btnModeAi');
+    const btnModeBrute = document.getElementById('btnModeBrute');
+    const bruteWarning = document.getElementById('bruteWarning');
+
+    const elBestDistance = document.getElementById('uiBestDistance');
+    const elStatusText = document.getElementById('uiStatusText');
+    const elEvalCount = document.getElementById('uiEvalCount');
+    const elEvalSpeed = document.getElementById('uiEvalSpeed');
+
+    let prng = new ADC_PRNG(12345);
+    let cities = []; 
+    let distanceLUT = []; // 距離の事前計算キャッシュ (O(1)参照用)
+    let nearestLUT = [];  // RCM: 各都市から近い順のリスト (局所探索用)
+    let population = []; 
+    const popSize = 150;
+    
+    let currentMode = 'ai';   
+    let globalTicks = 0;      
+    let bestEntity = null;
+    let globalFatigue = 0;    
+    let currentCvmState = CVM_STATE.BIRTH;
+    let isRunning = false;
+    let animationId = null;
+    let benchmarkHistory = [];
+
+    // Zero Allocation用プールバッファ
+    let tempOrder = null;
+    let tempUsed = null;
+
+    let bruteForceOrder = [];
+    let isBruteForceFinished = false;
+    let totalBruteForceEvaluations = 0;
+
+    let globalEvaluations = 0; 
+    let lastMeasureTime = performance.now();
+    let lastEvaluations = 0;
+    let currentSpeed = 0;
+    let lastDrawTime = 0;
+
+    function calcBruteForceTotal(n) {
+      if (n <= 2) return 1;
+      let total = 1;
+      for (let i = 1; i <= n - 1; i++) {
+        total *= i;
+      }
+      return total / 2; // 鏡面反射枝刈り分
+    }
+
+    function updateBruteWarning() {
+      const n = parseInt(elCityCount.value);
+      if (isNaN(n)) return;
+      
+      if (currentMode === 'brute') {
+        totalBruteForceEvaluations = calcBruteForceTotal(n);
+        let textStr = "";
+        if (totalBruteForceEvaluations > 1e16 || !isFinite(totalBruteForceEvaluations)) {
+            textStr = "計測不能（宇宙の寿命超え）";
+        } else {
+            textStr = totalBruteForceEvaluations.toLocaleString() + " 回";
+        }
+        
+        let msg = `都市数 ${n} での総計算量（インパルス）は 約 ${textStr} です。`;
+        if (n > 11) msg += '<br>※12都市以上は計算量の爆発により、途方もない時間がかかります。';
+        
+        document.getElementById('uiBruteCalcAmount').innerHTML = msg;
+        bruteWarning.classList.remove('hidden');
+        document.getElementById('bruteProgressContainer').classList.remove('hidden');
+      } else {
+        bruteWarning.classList.add('hidden');
+        document.getElementById('bruteProgressContainer').classList.add('hidden');
+      }
+    }
+
+    function setMode(mode) {
+      if (currentMode === mode) return; 
+      if (isRunning) stopSimulation();
+      currentMode = mode;
+      
+      if (mode === 'ai') {
+        btnModeAi.classList.add('bg-white', 'shadow-sm', 'text-blue-600');
+        btnModeAi.classList.remove('text-slate-500');
+        btnModeBrute.classList.remove('bg-white', 'shadow-sm', 'text-blue-600');
+        btnModeBrute.classList.add('text-slate-500');
+      } else {
+        btnModeBrute.classList.add('bg-white', 'shadow-sm', 'text-blue-600');
+        btnModeBrute.classList.remove('text-slate-500');
+        btnModeAi.classList.remove('bg-white', 'shadow-sm', 'text-blue-600');
+        btnModeAi.classList.add('text-slate-500');
+      }
+      updateBruteWarning();
+      resetSimulation();
+    }
+
+    function precalculateLUT() {
+      const n = cities.length;
+      distanceLUT = new Float64Array(n * n);
+      nearestLUT = new Int32Array(n * n); 
+
+      for (let i = 0; i < n; i++) {
+        let dists = [];
+        for (let j = 0; j < n; j++) {
+          if (i === j) {
+            distanceLUT[i * n + j] = 0;
+            dists.push({idx: j, d: 0});
+          } else {
+            const dx = cities[i].x - cities[j].x;
+            const dy = cities[i].y - cities[j].y;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            distanceLUT[i * n + j] = d;
+            dists.push({idx: j, d: d});
+          }
+        }
+        // 近い順にソートしてキャッシュ
+        dists.sort((a, b) => a.d - b.d);
+        for(let j = 0; j < n; j++){
+          nearestLUT[i * n + j] = dists[j].idx;
+        }
+      }
+      tempOrder = new Int32Array(n);
+      tempUsed = new Uint8Array(n);
+    }
+
+    function generateCities() {
+      const count = parseInt(elCityCount.value);
+      if (isNaN(count) || count < 3) return;
+
+      prng = new ADC_PRNG(Date.now()); 
+      cities = [];
+      for (let i = 0; i < count; i++) {
+        cities.push({ x: 0.05 + prng.next() * 0.9, y: 0.05 + prng.next() * 0.9 });
+      }
+      
+      precalculateLUT(); 
+      updateBruteWarning();
+      resetSimulation();
+    }
+
+    function resetSimulation() {
+      stopSimulation();
+      globalTicks = 0;
+      globalFatigue = 0;
+      bestEntity = null;
+      currentCvmState = CVM_STATE.BIRTH;
+      benchmarkHistory = [];
+      globalEvaluations = 0;
+      currentSpeed = 0;
+      lastMeasureTime = performance.now();
+      lastEvaluations = 0;
+      lastDrawTime = 0;
+      
+      bruteForceOrder = [];
+      isBruteForceFinished = false;
+      
+      btnStart.innerText = '探す！';
+      updatePDE_UI();
+      resizeCanvas(); 
+    }
+
+    function calculateDistance(order) {
+      let d = 0;
+      const n = order.length;
+      const cityLen = cities.length;
+      let currIdx = order[0];
+      for (let i = 1; i < n; i++) {
+        const nextIdx = order[i];
+        d += distanceLUT[currIdx * cityLen + nextIdx];
+        currIdx = nextIdx;
+      }
+      d += distanceLUT[currIdx * cityLen + order[0]];
+      return d;
+    }
+
+    function initializePopulation() {
+      population = [];
+      const baseOrder = Array.from({length: cities.length}, (_, i) => i);
+      for (let i = 0; i < popSize; i++) {
+        let order = [...baseOrder];
+        for (let j = order.length - 1; j > 0; j--) {
+          const k = prng.nextInt(0, j);
+          [order[j], order[k]] = [order[k], order[j]];
+        }
+        const ent = new PathEntity(order);
+        evaluateEntity(ent);
+        population.push(ent);
+      }
+    }
+
+    function evaluateEntity(ent) {
+      globalEvaluations++; 
+      ent.distance = calculateDistance(ent.order);
+      ent.intensity = 1.0 / ent.distance;
+
+      if (!bestEntity || ent.intensity > bestEntity.intensity) {
+        bestEntity = new PathEntity(Array.from(ent.order));
+        bestEntity.distance = ent.distance;
+        bestEntity.intensity = ent.intensity;
+        
+        globalFatigue = 0; 
+        if (globalTicks > 0) currentCvmState = CVM_STATE.GROWTH;
+      }
+    }
+
+    // IPDF: 潜在位相への跳躍 (2-opt 近傍探索)
+    function applyIPDF_SafeDrift(order, outOrder) {
+      const len = order.length;
+      outOrder.set(order);
+      if (len < 4) return;
+      
+      const i = prng.nextInt(0, len - 3);
+      const cityA = order[i];
+      
+      const kMax = Math.min(10, len - 1); 
+      const targetCity = nearestLUT[cityA * len + prng.nextInt(1, kMax)];
+      
+      let j = -1;
+      for (let idx = i + 2; idx < len; idx++) {
+        if (order[idx] === targetCity) {
+          j = idx;
+          break;
+        }
+      }
+      
+      if (j === -1) j = prng.nextInt(i + 2, len - 1);
+      
+      let left = i + 1;
+      let right = j;
+      while (left < right) {
+        const temp = outOrder[left];
+        outOrder[left] = outOrder[right];
+        outOrder[right] = temp;
+        left++;
+        right--;
+      }
+    }
+
+    function crossover(p1, p2, outOrder) {
+      const len = p1.order.length;
+      let start = prng.nextInt(0, len - 1);
+      let end = prng.nextInt(0, len - 1);
+      if (start > end) { let t = start; start = end; end = t; }
+
+      outOrder.fill(-1);
+      tempUsed.fill(0); 
+
+      for (let i = start; i <= end; i++) {
+        const cityIdx = p1.order[i];
+        outOrder[i] = cityIdx;
+        tempUsed[cityIdx] = 1;
+      }
+
+      let p2Index = 0;
+      for (let i = 0; i < len; i++) {
+        if (outOrder[i] === -1) {
+          while (tempUsed[p2.order[p2Index]]) {
+            p2Index++;
+          }
+          const cityIdx = p2.order[p2Index];
+          outOrder[i] = cityIdx;
+          tempUsed[cityIdx] = 1;
+        }
+      }
+    }
+
+    function tickCVD(dt) {
+      globalTicks++;
+      let anyAction = false;
+      const len = cities.length;
+
+      globalFatigue += dt;
+      if (globalFatigue > 100) currentCvmState = CVM_STATE.REST;
+      else if (globalFatigue > 30) currentCvmState = CVM_STATE.DECLINE;
+      else if (currentCvmState !== CVM_STATE.GROWTH && currentCvmState !== CVM_STATE.BIRTH) {
+        currentCvmState = CVM_STATE.FULFILLMENT;
+      }
+
+      for (let i = 0; i < popSize; i++) {
+        let ent = population[i];
+
+        if (ent.state === 'R') {
+          ent.fatigue = Math.max(0, ent.fatigue - dt * 2.0);
+          if (ent.fatigue <= 0) ent.state = 'D'; 
+          continue;
+        }
+
+        const cycleSpeed = 1.0 + (ent.intensity / bestEntity.intensity);
+        ent.phase += dt * cycleSpeed;
+
+        if (ent.phase >= 1.0) {
+          ent.phase -= 1.0; 
+          anyAction = true;
+
+          if (currentCvmState === CVM_STATE.DECLINE || prng.next() < 0.2) {
+             applyIPDF_SafeDrift(ent.order, tempOrder);
+          } else {
+             const partner = population[prng.nextInt(0, popSize - 1)];
+             crossover(ent, partner, tempOrder);
+             if (prng.next() < 0.05) {
+               const idxA = prng.nextInt(0, len - 1);
+               const idxB = prng.nextInt(0, len - 1);
+               let temp = tempOrder[idxA];
+               tempOrder[idxA] = tempOrder[idxB];
+               tempOrder[idxB] = temp;
+             }
+          }
+
+          const oldIntensity = ent.intensity;
+          ent.order.set(tempOrder);
+          evaluateEntity(ent);
+
+          if (ent.intensity <= oldIntensity) {
+            ent.fatigue += 0.2;
+            if (ent.fatigue >= 1.0) ent.state = 'R'; 
+          } else {
+            ent.fatigue = 0; 
+          }
+        }
+      }
+
+      if (globalTicks % 10 === 0 && bestEntity) {
+        benchmarkHistory.push({ tick: globalEvaluations, dist: bestEntity.distance });
+        if (benchmarkHistory.length > 300) {
+          benchmarkHistory = benchmarkHistory.filter((_, idx) => idx % 2 === 0 || idx === benchmarkHistory.length - 1);
+        }
+      }
+      return anyAction;
+    }
+
+    function tickBruteForce(batchSize) {
+      let actionOccurred = false;
+      const n = bruteForceOrder.length;
+      const cityLen = cities.length;
+      let count = 0;
+      
+      while (count < batchSize) {
+        if (isBruteForceFinished) break;
+        
+        if (bruteForceOrder[0] < bruteForceOrder[n - 1]) { 
+          globalEvaluations++; 
+          let d = 0;
+          let prevIdx = 0; 
+          for (let i = 0; i < n; i++) {
+            const currIdx = bruteForceOrder[i];
+            d += distanceLUT[prevIdx * cityLen + currIdx];
+            prevIdx = currIdx;
+          }
+          d += distanceLUT[prevIdx * cityLen + 0];
+          
+          let intensity = 1.0 / d;
+          if (!bestEntity || intensity > bestEntity.intensity) {
+            bestEntity = new PathEntity([0, ...bruteForceOrder]); 
+            bestEntity.distance = d;
+            bestEntity.intensity = intensity;
+            actionOccurred = true;
+          }
+        }
+
+        let i = n - 2;
+        while (i >= 0 && bruteForceOrder[i] >= bruteForceOrder[i + 1]) { i--; }
+        
+        if (i < 0) {
+          isBruteForceFinished = true;
+          currentCvmState = CVM_STATE.REST;
+          actionOccurred = true;
+          break;
+        }
+        
+        let j = n - 1;
+        while (bruteForceOrder[j] <= bruteForceOrder[i]) { j--; }
+        
+        let temp = bruteForceOrder[i]; 
+        bruteForceOrder[i] = bruteForceOrder[j]; 
+        bruteForceOrder[j] = temp;
+        
+        let left = i + 1;
+        let right = n - 1;
+        while (left < right) {
+          temp = bruteForceOrder[left]; 
+          bruteForceOrder[left] = bruteForceOrder[right]; 
+          bruteForceOrder[right] = temp;
+          left++; right--;
+        }
+        count++;
+      }
+      
+      if (globalEvaluations % 100000 === 0 && bestEntity) {
+        benchmarkHistory.push({ tick: globalEvaluations, dist: bestEntity.distance });
+        if (benchmarkHistory.length > 300) {
+          benchmarkHistory = benchmarkHistory.filter((_, idx) => idx % 2 === 0 || idx === benchmarkHistory.length - 1);
+        }
+      }
+      return actionOccurred;
+    }
+
+    function updatePDE_UI() {
+      elEvalCount.innerText = globalEvaluations.toLocaleString();
+      elEvalSpeed.innerHTML = `${currentSpeed.toLocaleString()} <span class="text-[10px] font-normal text-slate-400">/秒</span>`;
+      
+      if (bestEntity) {
+        elBestDistance.innerText = Math.floor(bestEntity.distance * 1000).toLocaleString();
+      } else {
+        elBestDistance.innerText = '---';
+      }
+
+      switch (currentCvmState) {
+        case CVM_STATE.BIRTH: elStatusText.innerText = '準備完了'; break;
+        case CVM_STATE.GROWTH: elStatusText.innerText = '探索中'; break;
+        case CVM_STATE.FULFILLMENT: elStatusText.innerText = '収束中'; break;
+        case CVM_STATE.DECLINE: elStatusText.innerText = 'ひらめき待ち'; break;
+        case CVM_STATE.REST: elStatusText.innerText = '探索完了'; break;
+      }
+      
+      if (currentMode === 'brute') {
+        if (isRunning && totalBruteForceEvaluations < 1e16) {
+          const progress = Math.min(100, (globalEvaluations / totalBruteForceEvaluations) * 100);
+          document.getElementById('bruteProgressBar').style.width = progress + '%';
+          
+          if (currentSpeed > 0) {
+            const remainEvals = totalBruteForceEvaluations - globalEvaluations;
+            const remainSec = remainEvals / currentSpeed;
+            if (remainSec > 31536000) {
+                document.getElementById('uiBruteETA').innerText = "予想残り時間: 1年以上...";
+            } else if (remainSec > 86400) {
+                document.getElementById('uiBruteETA').innerText = `予想残り時間: 約 ${Math.floor(remainSec/86400)}日`;
+            } else if (remainSec > 3600) {
+                document.getElementById('uiBruteETA').innerText = `予想残り時間: 約 ${Math.floor(remainSec/3600)}時間`;
+            } else if (remainSec > 60) {
+                document.getElementById('uiBruteETA').innerText = `予想残り時間: 約 ${Math.floor(remainSec/60)}分`;
+            } else {
+                document.getElementById('uiBruteETA').innerText = `予想残り時間: 約 ${Math.floor(remainSec)}秒`;
+            }
+          } else {
+             document.getElementById('uiBruteETA').innerText = "予想残り時間: 計算中...";
+          }
+        } else if (isBruteForceFinished) {
+          document.getElementById('bruteProgressBar').style.width = '100%';
+          document.getElementById('uiBruteETA').innerText = "探索完了！";
+        } else if (!isRunning) {
+          document.getElementById('uiBruteETA').innerText = "待機中";
+        }
+      }
+    }
+
+    function drawBenchmark() {
+      benchCtx.clearRect(0, 0, benchCanvas.width, benchCanvas.height);
+      if (benchmarkHistory.length < 2) return;
+
+      const w = benchCanvas.width;
+      const h = benchCanvas.height;
+      const maxDist = benchmarkHistory[0].dist;
+      const minDist = bestEntity.distance * 0.98;
+      const rangeY = (maxDist - minDist) || 0.001;
+      const maxTick = benchmarkHistory[benchmarkHistory.length - 1].tick;
+      const rangeX = maxTick || 1;
+
+      benchCtx.beginPath();
+      benchCtx.strokeStyle = '#3b82f6';
+      benchCtx.lineWidth = 4;
+      benchCtx.lineJoin = 'round';
+      benchCtx.lineCap = 'round';
+
+      benchmarkHistory.forEach((pt, i) => {
+        const x = (pt.tick / rangeX) * w;
+        const y = h - Math.max(0, Math.min(h, ((pt.dist - minDist) / rangeY) * h));
+        if (i === 0) benchCtx.moveTo(x, y);
+        else benchCtx.lineTo(x, y);
+      });
+      benchCtx.stroke();
+      
+      benchCtx.lineTo(w, h);
+      benchCtx.lineTo(0, h);
+      benchCtx.fillStyle = 'rgba(59, 130, 246, 0.15)';
+      benchCtx.fill();
+    }
+
+    function resizeCanvas() {
+      canvas.width = 800; 
+      canvas.height = 800;
+      
+      const parent = benchCanvas.parentElement;
+      if (parent && parent.clientWidth > 0) {
+        benchCanvas.width = parent.clientWidth * 2;
+        benchCanvas.height = parent.clientHeight * 2;
+      } else {
+        benchCanvas.width = 600;
+        benchCanvas.height = 200;
+      }
+      drawField();
+      drawBenchmark();
+    }
+
+    function drawField() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const w = canvas.width;
+      const h = canvas.height;
+
+      if (bestEntity) {
+        ctx.beginPath();
+        for (let i = 0; i < bestEntity.order.length; i++) {
+          const cityIdx = bestEntity.order[i];
+          const x = cities[cityIdx].x * w;
+          const y = cities[cityIdx].y * h;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        const firstCity = cities[bestEntity.order[0]];
+        ctx.lineTo(firstCity.x * w, firstCity.y * h);
+        
+        ctx.strokeStyle = '#cbd5e1'; 
+        ctx.lineWidth = 2;
+        
+        if (isRunning) {
+          if (currentCvmState === CVM_STATE.GROWTH) ctx.strokeStyle = '#60a5fa'; 
+          if (currentCvmState === CVM_STATE.DECLINE) ctx.strokeStyle = '#fb923c'; 
+        } else if (bestEntity) {
+          ctx.strokeStyle = '#38bdf8'; 
+          ctx.lineWidth = 4;
+        }
+        ctx.stroke();
+      }
+
+      cities.forEach((city) => {
+        const x = city.x * w;
+        const y = city.y * h;
+        ctx.beginPath();
+        ctx.arc(x, y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = '#3b82f6';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+    }
+
+    function simulationLoop() {
+      if (!isRunning) return;
+
+      const frameStartTime = performance.now();
+      let actionOccurred = false;
+      
+      if (currentMode === 'ai') {
+        const dtPerFrame = 0.2; 
+        while (performance.now() - frameStartTime < 8) {
+          if (currentCvmState === CVM_STATE.REST) {
+            stopSimulation();
+            break;
+          }
+          if(tickCVD(dtPerFrame)) actionOccurred = true;
+        }
+      } else {
+        while (performance.now() - frameStartTime < 8) {
+          if (isBruteForceFinished) {
+            stopSimulation();
+            break;
+          }
+          if(tickBruteForce(10000)) actionOccurred = true;
+        }
+      }
+
+      const now = performance.now();
+      if (now - lastMeasureTime >= 500) {
+        const diffEvals = globalEvaluations - lastEvaluations;
+        const diffTime = (now - lastMeasureTime) / 1000;
+        currentSpeed = Math.floor(diffEvals / diffTime);
+        lastMeasureTime = now;
+        lastEvaluations = globalEvaluations;
+        updatePDE_UI();
+      }
+
+      if ((actionOccurred || now - lastDrawTime > 100) && now - lastDrawTime > 33) {
+        drawField();
+        drawBenchmark();
+        lastDrawTime = now;
+      }
+
+      if (isRunning) {
+        animationId = requestAnimationFrame(simulationLoop);
+      }
+    }
+
+    function startSimulation() {
+      if (isRunning) return; 
+      if (cities.length === 0) generateCities();
+      
+      isRunning = true;
+      btnStart.disabled = true;
+      btnStart.classList.add('opacity-50', 'cursor-not-allowed');
+      btnGenerate.disabled = true;
+      btnGenerate.classList.add('opacity-50', 'cursor-not-allowed');
+      btnStop.disabled = false;
+      elCityCount.disabled = true;
+      btnModeAi.disabled = true;
+      btnModeBrute.disabled = true;
+
+      if (currentMode === 'ai') {
+        if (globalTicks === 0) initializePopulation();
+        if (currentCvmState === CVM_STATE.REST) {
+          globalFatigue = 0;
+          currentCvmState = CVM_STATE.DECLINE;
+          population.forEach(ent => ent.state = 'D');
+        }
+      } else {
+        if (globalEvaluations === 0 || isBruteForceFinished) {
+          bruteForceOrder = Array.from({length: cities.length - 1}, (_, i) => i + 1);
+          isBruteForceFinished = false;
+          bestEntity = null;
+          globalEvaluations = 0;
+          benchmarkHistory = [];
+        }
+        currentCvmState = CVM_STATE.GROWTH;
+      }
+
+      lastMeasureTime = performance.now();
+      lastEvaluations = globalEvaluations;
+      simulationLoop();
+    }
+
+    function stopSimulation() {
+      isRunning = false;
+      cancelAnimationFrame(animationId);
+      
+      btnStart.disabled = false;
+      btnStart.classList.remove('opacity-50', 'cursor-not-allowed');
+      btnStart.innerText = 'もう一度探す';
+      btnGenerate.disabled = false;
+      btnGenerate.classList.remove('opacity-50', 'cursor-not-allowed');
+      btnStop.disabled = true;
+      elCityCount.disabled = false;
+      btnModeAi.disabled = false;
+      btnModeBrute.disabled = false;
+      
+      currentSpeed = 0; 
+      
+      if(currentCvmState !== CVM_STATE.REST && currentCvmState !== CVM_STATE.BIRTH) {
+         elStatusText.innerText = '一時停止';
+      }
+      
+      updatePDE_UI(); 
+      drawField();
+    }
+
+    elCityCount.addEventListener('input', (e) => {
+      generateCities();
+    });
+
+    btnGenerate.addEventListener('click', () => {
+      generateCities();
+    });
+
+    btnModeAi.addEventListener('click', () => setMode('ai'));
+    btnModeBrute.addEventListener('click', () => setMode('brute'));
+
+    btnStart.addEventListener('click', startSimulation);
+    btnStop.addEventListener('click', () => {
+        stopSimulation();
+        updatePDE_UI();
+    });
+    btnReset.addEventListener('click', () => {
+        resetSimulation();
+        updatePDE_UI();
+    });
+    
+    if(btnRefresh) {
+        btnRefresh.addEventListener('click', () => {
+            resizeCanvas();
+            updatePDE_UI();
+        });
+    }
+    
+    window.addEventListener('resize', resizeCanvas);
+
+    generateCities();
+
+  </script>
+</body>
+</html>
