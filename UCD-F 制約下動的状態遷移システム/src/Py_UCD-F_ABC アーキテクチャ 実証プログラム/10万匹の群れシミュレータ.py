@@ -2,6 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
+from matplotlib.colors import ListedColormap
 
 # =====================================================================
 # Internal Logic: Py_UCD-F_ABC Core v1.0.0 Architecture
@@ -20,6 +21,7 @@ FLAG_DEAD = 0        # Captured/Eliminated
 FLAG_ACTIVE = 1      # Normal active entity
 FLAG_ZERO_LOCK = 2   # Terrainized (Fatigue MAX, unable to move)
 FLAG_PROB_CLOUD = 3  # Phase Transition (Safe distance, computation suspended)
+FLAG_PROMOTED = 4    # Dynamic Bit-Resolution Promotion (Chaos zone, High-Res calculation)
 
 def setup_environment():
     """Autonomous Environment Optimization"""
@@ -70,18 +72,20 @@ predator_pos = torch.tensor([WIDTH / 2, HEIGHT / 2], device=device)
 # Core Logic (Tensor-based Parallel Inference & Evolution)
 # =====================================================================
 def update_ai_dynamics(pos, vel, intensity, fatigue, state_flags, fitness, brain_weights, predator_pos, frame):
-    # Determine which entities need computation
-    active_mask = (state_flags == FLAG_ACTIVE) | (state_flags == FLAG_PROB_CLOUD)
-    
-    # 1. Local Time Dilation (局所時間拡張)
-    # Entities with low intensity are calculated less frequently to save resources
-    skip_calc = (intensity < 0.5) & (frame % 2 == 0) & active_mask
-    do_calc = active_mask & ~skip_calc
-    
     # Pre-calculate distances for Cone of Influence
     diff = predator_pos - pos
     dist = torch.norm(diff, dim=1, keepdim=True)
     dist_clamped = torch.clamp(dist, min=1.0)
+    
+    # 影響円錐: 怪獣の周辺（半径250以内）のみを計算・移動の対象とする
+    is_near_predator = (dist.squeeze() < 250.0)
+    
+    # Determine which entities need computation
+    active_mask = (state_flags == FLAG_ACTIVE) | (state_flags == FLAG_PROB_CLOUD) | (state_flags == FLAG_PROMOTED)
+    
+    # 1. Local Time Dilation (局所時間拡張)
+    skip_calc = (intensity < 0.5) & (frame % 2 == 0) & active_mask
+    do_calc = active_mask & ~skip_calc & is_near_predator
     
     # 2. Parallel Inference (Batch Matrix Multiplication)
     dist_norm_dir = diff / dist_clamped
@@ -91,13 +95,15 @@ def update_ai_dynamics(pos, vel, intensity, fatigue, state_flags, fitness, brain
     ai_input = torch.cat([dist_norm_dir, dist_val, fatigue.unsqueeze(1), bias], dim=1)
     ai_output = torch.bmm(ai_input.unsqueeze(1), brain_weights).squeeze(1)
     
-    # 3. VIF Dynamics Integration
-    is_near = (dist.squeeze() < 200.0)
-    new_intensity = torch.where(is_near, intensity + 0.1, intensity - 0.05)
+    # 3. VIF Dynamics Integration & Dynamic Resolution Promotion
+    new_intensity = torch.where(is_near_predator, intensity + 0.1, intensity - 0.05)
     new_intensity = torch.clamp(new_intensity, 0.0, 5.0)
     intensity = torch.where(do_calc, new_intensity, intensity)
     
-    accel = ai_output * (intensity.unsqueeze(1) + 0.5)
+    # Dynamic Bit-Resolution Promotion: Promoted entities have higher reaction gain
+    promotion_multiplier = torch.where(state_flags.unsqueeze(1) == FLAG_PROMOTED, 1.5, 1.0)
+    accel = ai_output * (intensity.unsqueeze(1) + 0.5) * promotion_multiplier
+    
     new_vel = vel * 0.9 + accel * 0.1
     speed = torch.norm(new_vel, dim=1, keepdim=True)
     
@@ -105,87 +111,99 @@ def update_ai_dynamics(pos, vel, intensity, fatigue, state_flags, fitness, brain
     new_vel = (new_vel / torch.clamp(speed, min=0.1)) * max_speed
     vel = torch.where(do_calc.unsqueeze(1), new_vel, vel)
     
+    # 遠くの個体は計算対象外となり、慣性で滑らかに停止する
+    vel = torch.where(is_near_predator.unsqueeze(1), vel, vel * 0.5)
+    
     new_fatigue = torch.where(speed.squeeze() > 2.0, fatigue + 0.005, fatigue - 0.001)
     new_fatigue = torch.clamp(new_fatigue, 0.0, 1.0)
     fatigue = torch.where(do_calc, new_fatigue, fatigue)
     
+    # 位置更新は全員に行う（遠くの個体は vel が 0 になるためその場で静止する）
     new_pos = pos + vel
     new_pos[:, 0] = torch.remainder(new_pos[:, 0], WIDTH)
     new_pos[:, 1] = torch.remainder(new_pos[:, 1], HEIGHT)
-    pos = torch.where(do_calc.unsqueeze(1), new_pos, pos)
+    pos = new_pos
     
-    # 4. Phase Transition (確率雲への強制的相転移)
-    # Safe and calm entities transition to PROB_CLOUD to suspend physics
-    prob_cloud_cond = (dist.squeeze() > 600.0) & (intensity < 0.1) & active_mask
-    state_flags = torch.where(prob_cloud_cond, torch.tensor(FLAG_PROB_CLOUD, dtype=torch.uint8, device=device), state_flags)
-    wake_up_cond = (dist.squeeze() <= 600.0) & (state_flags == FLAG_PROB_CLOUD)
-    state_flags = torch.where(wake_up_cond, torch.tensor(FLAG_ACTIVE, dtype=torch.uint8, device=device), state_flags)
+    # 4. State Transition Evaluation (状態の再評価)
+    new_state_flags = state_flags.clone()
+    is_alive_and_mobile = (state_flags == FLAG_ACTIVE) | (state_flags == FLAG_PROB_CLOUD) | (state_flags == FLAG_PROMOTED)
+    
+    # Dynamic Bit-Resolution Promotion (カオス領域での高解像度化)
+    cond_promoted = (dist.squeeze() < 150.0) & is_alive_and_mobile
+    # Phase Transition (確率雲への強制的相転移)
+    cond_cloud = (dist.squeeze() >= 250.0) & (intensity < 0.1) & is_alive_and_mobile
+    cond_active = ~(cond_promoted | cond_cloud) & is_alive_and_mobile
+    
+    new_state_flags = torch.where(cond_promoted, torch.tensor(FLAG_PROMOTED, dtype=torch.uint8, device=device), new_state_flags)
+    new_state_flags = torch.where(cond_cloud, torch.tensor(FLAG_PROB_CLOUD, dtype=torch.uint8, device=device), new_state_flags)
+    new_state_flags = torch.where(cond_active, torch.tensor(FLAG_ACTIVE, dtype=torch.uint8, device=device), new_state_flags)
     
     # 5. Zero-Lock Terrainization (死骸の地形化)
-    # Entities that reach max fatigue become obstacles (Zero-Lock) and stop moving entirely
-    zero_lock_cond = (fatigue >= 0.99) & active_mask
-    state_flags = torch.where(zero_lock_cond, torch.tensor(FLAG_ZERO_LOCK, dtype=torch.uint8, device=device), state_flags)
-    vel = torch.where(zero_lock_cond.unsqueeze(1), torch.zeros_like(vel), vel)
+    cond_zero_lock = (fatigue >= 0.99) & is_alive_and_mobile
+    new_state_flags = torch.where(cond_zero_lock, torch.tensor(FLAG_ZERO_LOCK, dtype=torch.uint8, device=device), new_state_flags)
+    vel = torch.where(cond_zero_lock.unsqueeze(1), torch.zeros_like(vel), vel)
     
-    # 6. Elimination Logic
-    captured = (dist.squeeze() < 30.0) & (state_flags != FLAG_DEAD)
+    # 6. Elimination Logic (脱落)
+    captured = (dist.squeeze() < 30.0) & (new_state_flags != FLAG_DEAD)
     num_captured = torch.sum(captured).item()
     
     if num_captured > 0:
-        state_flags = torch.where(captured, torch.tensor(FLAG_DEAD, dtype=torch.uint8, device=device), state_flags)
+        new_state_flags = torch.where(captured, torch.tensor(FLAG_DEAD, dtype=torch.uint8, device=device), new_state_flags)
         vel = torch.where(captured.unsqueeze(1), torch.zeros_like(vel), vel)
     
     # Update Fitness for survivors and terrainized entities
-    surviving_mask = (state_flags != FLAG_DEAD)
+    surviving_mask = (new_state_flags != FLAG_DEAD)
     fitness = torch.where(surviving_mask, fitness + 1.0, fitness)
 
-    return num_captured, state_flags
+    return num_captured, new_state_flags
 
 def online_learning_event():
-    """Continuous Online Learning: Learn from eliminated entities without resetting"""
+    """Continuous Online Learning & Data Reordering"""
     global brain_weights, pos, vel, intensity, fatigue, state_flags, fitness, learning_cycles
     
-    dead_mask = (state_flags == FLAG_DEAD)
-    num_dead = dead_mask.sum().item()
+    alive_mask = (state_flags != FLAG_DEAD)
+    num_alive = alive_mask.sum().item()
     
-    # Only learn if there is a sufficient sample of failures (eliminated entities)
-    if num_dead > 0:
-        alive_mask = (state_flags == FLAG_ACTIVE) | (state_flags == FLAG_PROB_CLOUD)
+    if num_alive > 0:
+        alive_indices = torch.nonzero(alive_mask).squeeze()
         
-        if alive_mask.sum().item() > 0:
-            alive_fitness = fitness.clone()
-            alive_fitness[~alive_mask] = -1.0 # Ignore dead entities for elite selection
+        # Avoid shape errors if there's only 1 survivor
+        if alive_indices.dim() == 0:
+            alive_indices = alive_indices.unsqueeze(0)
             
-            # Select elites from survivors
-            num_elites = max(1, int(alive_mask.sum().item() * 0.1))
-            _, elite_indices = torch.topk(alive_fitness, num_elites)
-            elite_brains = brain_weights[elite_indices]
-            
-            # Replace eliminated brains with mutated elite brains
-            # (Learning from failures: "Those who died were wrong, adopt strategies of those who survived")
-            parent_indices = torch.randint(0, num_elites, (num_dead,), device=device)
-            new_brains = elite_brains[parent_indices]
-            
-            mutation = (torch.rand((num_dead, 5, 2), device=device) - 0.5) * 0.4
-            new_brains += mutation
-            brain_weights[dead_mask] = new_brains
-            
-            # Respawn eliminated entities as new learners
-            pos[dead_mask] = torch.rand((num_dead, 2), device=device) * torch.tensor([WIDTH, HEIGHT], device=device)
-            vel[dead_mask] = 0.0
-            intensity[dead_mask] = 0.0
-            fatigue[dead_mask] = 0.0
-            fitness[dead_mask] = 0.0
-            state_flags[dead_mask] = FLAG_ACTIVE
-            
-        # Micro-mutation for survivors to encourage continuous adaptation
-        alive_idx = torch.nonzero(alive_mask).squeeze()
-        if alive_idx.numel() > 0:
-            micro_mutation = (torch.rand((alive_idx.numel(), 5, 2), device=device) - 0.5) * 0.05
-            brain_weights[alive_idx] += micro_mutation
+        alive_fitness = fitness[alive_indices]
+        
+        # Select elites from survivors
+        num_elites = max(1, int(num_alive * 0.1))
+        _, elite_local_indices = torch.topk(alive_fitness, num_elites)
+        elite_global_indices = alive_indices[elite_local_indices]
+        elite_brains = brain_weights[elite_global_indices]
+        
+        # Share knowledge: Update all survivors' brains by blending with mutated elite brains
+        parent_indices = torch.randint(0, num_elites, (num_alive,), device=device)
+        selected_elite_brains = elite_brains[parent_indices]
+        
+        mutation = (torch.rand((num_alive, 5, 2), device=device) - 0.5) * 0.2
+        updated_brains = selected_elite_brains + mutation
+        
+        # 30% of the new knowledge is blended into the survivors' current brains
+        brain_weights[alive_indices] = brain_weights[alive_indices] * 0.7 + updated_brains * 0.3
+
+    # Data Reordering / Stream Compaction (データ・リアライメント)
+    # Move DEAD entities to the end of the arrays to maximize L1/L2 cache hits for active computation
+    sort_keys = (state_flags == FLAG_DEAD).to(torch.int8)
+    _, sorted_indices = torch.sort(sort_keys)
+    
+    pos = pos[sorted_indices]
+    vel = vel[sorted_indices]
+    intensity = intensity[sorted_indices]
+    fatigue = fatigue[sorted_indices]
+    state_flags = state_flags[sorted_indices]
+    fitness = fitness[sorted_indices]
+    brain_weights = brain_weights[sorted_indices]
 
     learning_cycles += 1
-    print(f"🧬 [ONLINE LEARNING] Cycle {learning_cycles}: Analyzed {num_dead} eliminations. AI strategies updated.")
+    print(f"🧬 [ONLINE LEARNING] Cycle {learning_cycles}: Remaining survivors upgraded. Cache reordered.")
 
 # =====================================================================
 # View Layer
@@ -194,14 +212,16 @@ fig, ax = plt.subplots(figsize=(8, 8))
 fig.canvas.manager.set_window_title('🧠 100k AI Evolution Simulator 🧠')
 ax.set_facecolor('#0a0a0a')
 
-# Scatter for entities
-scatter = ax.scatter([], [], s=2, c=[], cmap='winter', vmin=0, vmax=5, alpha=0.6)
+# カスタムカラーマップ: 0=通常色(シアン), 1=逃走色(イエロー)
+custom_cmap = ListedColormap(['#00BCD4', '#FFEB3B'])
+scatter = ax.scatter([], [], s=2, c=[], cmap=custom_cmap, vmin=0, vmax=1, alpha=0.6)
+
 ax.set_xlim(0, WIDTH)
 ax.set_ylim(0, HEIGHT)
 ax.axis('off')
 
-# Monster Emoji representation
-predator_text = ax.text(WIDTH/2, HEIGHT/2, '🦖', fontsize=30, ha='center', va='center')
+# Predator representation
+predator_dot, = ax.plot([], [], 'ro', ms=15, label='Monster', markeredgecolor='white')
 
 # Stats UI
 info_text = ax.text(0.02, 0.98, "", transform=ax.transAxes, 
@@ -223,45 +243,70 @@ def animate(frame):
     
     frame_count += 1
     
-    # Predator movement (Continuous external entropy)
-    angle = frame_count * 0.04
-    predator_pos[0] = WIDTH / 2 + torch.cos(torch.tensor(angle, device=device)) * 350
-    predator_pos[1] = HEIGHT / 2 + torch.sin(torch.tensor(angle, device=device)) * 200
+    # Predator movement (Speed Increased)
+    t = frame_count * 0.04 # 速度アップ
+    
+    # 1. 画面全体を不規則に巡回するベース軌道
+    base_x = WIDTH / 2 + torch.cos(torch.tensor(t * 1.3, device=device)) * (WIDTH * 0.4)
+    base_y = HEIGHT / 2 + torch.sin(torch.tensor(t * 1.7, device=device)) * (HEIGHT * 0.4)
+    
+    # 2. 生き残っている人々の「重心」を計算
+    alive_mask = (state_flags != FLAG_DEAD)
+    if alive_mask.sum() > 0:
+        center_of_mass = pos[alive_mask].mean(dim=0)
+        target_x = base_x * 0.5 + center_of_mass[0] * 0.5
+        target_y = base_y * 0.5 + center_of_mass[1] * 0.5
+    else:
+        target_x = base_x
+        target_y = base_y
+        
+    # 3. 慣性をつけてスムーズにターゲットへ追従 (追従スピードアップ)
+    predator_pos[0] += (target_x - predator_pos[0]) * 0.1
+    predator_pos[1] += (target_y - predator_pos[1]) * 0.1
     
     # Physics & AI updates
     deaths, current_state_flags = update_ai_dynamics(
         pos, vel, intensity, fatigue, state_flags, fitness, brain_weights, predator_pos, frame_count
     )
     total_captured += deaths
+    state_flags = current_state_flags
     
     # Trigger Online Learning every 10 seconds (LEARNING_INTERVAL)
     if frame_count % LEARNING_INTERVAL == 0:
         online_learning_event()
     
-    # --- Visual Update (Schrödinger's Culling equivalent) ---
-    # Draw ACTIVE and ZERO_LOCK entities, but skip PROB_CLOUD (invisible/compressed)
-    draw_mask = (current_state_flags == FLAG_ACTIVE) | (current_state_flags == FLAG_ZERO_LOCK)
+    # --- Visual Update ---
+    # 死骸以外を描画する（遠くの静止している群衆も見えるようにする）
+    draw_mask = (state_flags != FLAG_DEAD)
     draw_idx = torch.nonzero(draw_mask).squeeze()
     
     if draw_idx.numel() > 0:
+        if draw_idx.dim() == 0:
+            draw_idx = draw_idx.unsqueeze(0)
+            
         step = max(1, draw_idx.numel() // RENDER_LIMIT)
         render_idx = draw_idx[::step]
         
         pos_cpu = pos[render_idx].cpu().numpy()
+        
+        # 色の判定: パニック状態(Intensity > 0.1)なら黄色(1.0)、そうでないなら通常色(0.0)
         intensity_cpu = intensity[render_idx].cpu().numpy()
+        is_escaping = (intensity_cpu > 0.1).astype(float)
         
         scatter.set_offsets(pos_cpu)
-        scatter.set_array(intensity_cpu)
+        scatter.set_array(is_escaping)
     else:
         scatter.set_offsets(np.empty((0, 2)))
         
-    predator_text.set_position((predator_pos[0].cpu().item(), predator_pos[1].cpu().item()))
+    predator_dot.set_data([predator_pos[0].cpu().item()], [predator_pos[1].cpu().item()])
     
     # Update UI text
     if ui_visible:
-        survivors = (current_state_flags != FLAG_DEAD).sum().item()
-        zero_locked = (current_state_flags == FLAG_ZERO_LOCK).sum().item()
-        clouded = (current_state_flags == FLAG_PROB_CLOUD).sum().item()
+        survivors = (state_flags != FLAG_DEAD).sum().item()
+        zero_locked = (state_flags == FLAG_ZERO_LOCK).sum().item()
+        clouded = (state_flags == FLAG_PROB_CLOUD).sum().item()
+        promoted = (state_flags == FLAG_PROMOTED).sum().item()
+        active = survivors - zero_locked - clouded - promoted
         
         frames_to_learn = LEARNING_INTERVAL - (frame_count % LEARNING_INTERVAL)
         
@@ -269,9 +314,10 @@ def animate(frame):
             f">> AI SURVIVAL MONITOR <<\n"
             f"LEARN CYCLES : {learning_cycles}\n"
             f"SURVIVORS    : {survivors:,}\n"
-            f"  - ACTIVE   : {survivors - zero_locked - clouded:,}\n"
+            f"  - ACTIVE   : {active:,}\n"
+            f"  - PROMOTED : {promoted:,} (High-Res)\n"
             f"  - TERRAIN  : {zero_locked:,} (Zero-Lock)\n"
-            f"  - CLOUDED  : {clouded:,} (Phase Transition)\n"
+            f"  - CLOUDED  : {clouded:,} (Phase Trans)\n"
             f"CUM. DEATHS  : {total_captured:,}\n"
             f"NEXT LEARN IN: {frames_to_learn} frames\n"
             f"--------------------------\n"
@@ -279,7 +325,7 @@ def animate(frame):
         )
         info_text.set_text(ui_string)
     
-    return scatter, predator_text, info_text
+    return scatter, predator_dot, info_text
 
 ani = animation.FuncAnimation(fig, animate, frames=2000, interval=25, blit=True)
 
