@@ -12,6 +12,7 @@ try:
 except ImportError:
     print("[警告] 自然言語処理ライブラリ 'janome' がインストールされていません。")
     print("        実行前に `pip install janome` を実行してください。")
+    print("        (インストールされていない場合、文字単位の学習モードで動作します)")
     Tokenizer = None
 
 # =====================================================================
@@ -128,17 +129,23 @@ class PyUCDF_NaviBrain:
         packed = (va | (vb << 8) | (vc << 16) | (st << 24) | (ruin << 27))
         self.state_buffer[2:self.vocab_size] = packed
 
+        # シナプス結合（マルコフ行列）の自然減衰
+        # 時間経過とともに、使われない言葉のつながりも徐々に薄れ、忘れ去られる
+        self.transition_matrix *= 0.99
+
     def learn_from_input(self, text):
         """ユーザーの入力から単語を抽出し、シナプス（遷移行列）を強化する"""
-        if not self.tokenizer:
-            return
+        
+        # NLP環境フォールバック: Janomeがない場合は文字単位で学習
+        if self.tokenizer:
+            tokens = [t.surface for t in self.tokenizer.tokenize(text)]
+        else:
+            tokens = list(text)
             
-        tokens = self.tokenizer.tokenize(text)
         prev_id = 0 # __BOS__
         used_ids = []
         
-        for token in tokens:
-            surface = token.surface
+        for surface in tokens:
             # 空白や一部の記号は無視
             if surface.strip() == "" or surface in ["、", "・"]:
                 continue
@@ -146,7 +153,8 @@ class PyUCDF_NaviBrain:
             # 未知の単語ならニューロンを新規割り当て
             if surface not in self.word2id:
                 if self.vocab_size >= self.max_vocab:
-                    continue # 容量限界
+                    prev_id = 0 # 容量限界: 誤った文脈接続を防ぐためリセット
+                    continue 
                 new_id = self.vocab_size
                 self.word2id[surface] = new_id
                 self.id2word[new_id] = surface
@@ -208,20 +216,35 @@ class PyUCDF_NaviBrain:
         
         # 最大30単語で打ち切り
         for _ in range(30):
-            # 現在の単語からの遷移確率ベクトルを取得
-            logits = self.transition_matrix[curr_id, :self.vocab_size].clone()
+            # 現在の単語からの遷移頻度ベクトルを取得
+            freqs = self.transition_matrix[curr_id, :self.vocab_size].clone()
             
-            # 誰も繋げたことがない単語への遷移は基本的に0だが、
-            # 重要度(vA)が高い単語は「突然変異」として繋がりやすくなる（バグの表現）
-            mutation_chance = 0.05 * va_normalized
-            logits = logits + mutation_chance
+            # 頻度を対数スケールに変換し、過学習（ループ発話）を防ぐ
+            logits = torch.log1p(freqs)
             
-            # ただし、BOSへの逆流は禁止
-            logits[0] = 0.0
+            # BOSへの逆流を禁止
+            logits[0] = -1e9
             
             # softmaxで確率分布に変換 (temperatureでランダム性を制御)
             temperature = 0.8
-            probs = torch.softmax(logits / temperature, dim=0)
+            context_probs = torch.softmax(logits / temperature, dim=0)
+            
+            # 突然変異（Mutation）の計算
+            # 重要度(vA)に基づく確率分布をブレンドし、脈絡のない話題へのジャンプを実現する
+            if freqs.max() == 0:
+                mutation_rate = 1.0  # 未知の状態なら100%突然変異
+            else:
+                mutation_rate = 0.05 # 5%の確率で文脈を無視して脳内で気になっている(vAが高い)言葉が口走られる
+                
+            va_probs = va_normalized.clone()
+            va_probs[0] = 0.0  # BOSには飛ばない
+            if va_probs.sum() > 0:
+                va_probs = va_probs / va_probs.sum()
+            else:
+                va_probs = context_probs
+                
+            # ブレンドされた最終的な確率分布
+            probs = context_probs * (1.0 - mutation_rate) + va_probs * mutation_rate
             
             # テンソル演算によるランダムサンプリング
             next_id = torch.multinomial(probs, 1).item()
@@ -234,7 +257,8 @@ class PyUCDF_NaviBrain:
             
             # 内部解析用のタグ付け処理（メタ認知）
             if self.tokenizer:
-                tokens = self.tokenizer.tokenize(word)
+                # ジェネレーターをリストに変換してアクセスエラーを回避
+                tokens = list(self.tokenizer.tokenize(word))
                 if tokens:
                     pos = tokens[0].part_of_speech.split(',')[0]
                     if pos in ['名詞', '動詞', '形容詞']:
