@@ -166,10 +166,12 @@ def apply_density_aggregation(memory: ParallelMemoryBuffer, max_density: int):
     unique_hashes, counts = np.unique(active_hashes, return_counts=True)
     overcrowded_hashes = unique_hashes[counts > max_density]
 
+    total_aggregated = 0
     for h in overcrowded_hashes:
         indices = np.where((hashes == h) & active_mask)[0]
         # 超過分を選択（ここでは簡易的に後半をカット）
         excess_indices = indices[max_density:]
+        total_aggregated += len(excess_indices)
         
         for idx in excess_indices:
             # 状態を更新して再パック
@@ -184,6 +186,9 @@ def apply_density_aggregation(memory: ParallelMemoryBuffer, max_density: int):
             memory.macro_clusters[h] = {"density": 0, "energy": 0.0}
         memory.macro_clusters[h]["density"] += len(excess_indices)
         memory.macro_clusters[h]["energy"] += np.sum(np.abs(px[excess_indices])) * 0.1
+
+    if total_aggregated > 0:
+        print(f"[Memory] Density threshold exceeded. {total_aggregated} entities converted to macro clusters.")
 
 def update_viewport_activation(memory: ParallelMemoryBuffer, view_center: Tuple[float, float, float], radius: float):
     """
@@ -202,11 +207,13 @@ def update_viewport_activation(memory: ParallelMemoryBuffer, view_center: Tuple[
     rx, ry, rz, px, py, pz, flags, wear = BitwiseMath.unpack_state_vectorized(memory.states)
     to_activate = (dist_sq < rad_sq) & (flags == memory.FLAG_INACTIVE)
     
-    if np.any(to_activate):
+    activated_count = np.sum(to_activate)
+    if activated_count > 0:
         flags[to_activate] = memory.FLAG_ACTIVE
         # 更新して書き戻し
         for i in np.where(to_activate)[0]:
             memory.states[i] = BitwiseMath.pack_state(rx[i], ry[i], rz[i], px[i], py[i], pz[i], flags[i], wear[i])
+        print(f"[Viewport] {activated_count} entities activated within observation radius {radius:.1f}.")
 
 def generate_active_indices(memory: ParallelMemoryBuffer, frame_count: int) -> np.ndarray:
     """
@@ -273,6 +280,7 @@ class SystemOrchestrator:
     全てのサブシステムを統合し、決定論的な計算ステップを実行する。
     """
     def __init__(self, capacity: int):
+        print(f"[System] Initializing orchestrator with capacity: {capacity}")
         self.memory = ParallelMemoryBuffer(capacity)
         self.memory.initialize_random()
         self.sync_layer = DecentralizedSyncMock()
@@ -283,13 +291,16 @@ class SystemOrchestrator:
         self.shared_noise = mp.Value('d', 0.5)
         self.daemon = mp.Process(target=sensor_daemon_process, args=(self.shared_noise, self.running_flag))
         self.daemon.start()
+        print("[System] Sensor daemon started.")
         
         self.frame_count = 0
 
     def step(self):
+        print(f"\n--- Frame {self.frame_count} ---")
         # 1. 現実エントロピーの取得と権威化
         local_noise = self.shared_noise.value
         authorized_noise = self.sync_layer.synchronize_and_authorize(local_noise)
+        print(f"[Sync] Authorized system noise level: {authorized_noise:.4f}")
 
         # 2. 観測者効果による非アクティブ状態の崩壊（実体化）
         # 仮の視点座標
@@ -301,6 +312,7 @@ class SystemOrchestrator:
 
         # 4. 動的頻度に基づくアクティブリポジトリの抽出
         active_indices = generate_active_indices(self.memory, self.frame_count)
+        print(f"[Compute] {len(active_indices)} entities scheduled for update based on dynamic frequency.")
 
         # 5. 状態遷移計算（固定小数点・ベクトル演算）
         if len(active_indices) > 0:
@@ -320,6 +332,10 @@ class SystemOrchestrator:
             wear = np.where(wear_increase_condition, np.minimum(wear + 1, 7), wear)
             
             # 最大限界に達した個体は凍結し、以後の演算から除外
+            newly_frozen = np.sum((wear == 7) & (flags != self.memory.FLAG_FROZEN))
+            if newly_frozen > 0:
+                print(f"[Compute] {newly_frozen} entities reached maximum wear and were frozen.")
+                
             flags = np.where(wear == 7, self.memory.FLAG_FROZEN, flags)
 
             # 更新した状態の再パック
@@ -329,7 +345,8 @@ class SystemOrchestrator:
                 )
 
         # 6. キャッシュ最適化のための定期的なメモリアライメント
-        if self.frame_count % 60 == 0:
+        if self.frame_count > 0 and self.frame_count % 60 == 0:
+            print("[Memory] Performing spatial memory realignment for cache optimization.")
             self._reorder_memory_by_spatial_locality()
 
         self.frame_count += 1
@@ -350,15 +367,16 @@ class SystemOrchestrator:
     def shutdown(self):
         self.running_flag.value = 0
         self.daemon.join()
+        print("[System] Sensor daemon stopped.")
 
 if __name__ == '__main__':
-    # コンソール出力は指示通り極力シンプルにする
     system = SystemOrchestrator(capacity=1000)
     
     try:
         for i in range(5):
             system.step()
+            time.sleep(0.5) # ログの流れを見やすくするための遅延
     finally:
         system.shutdown()
         
-    print("Execution completed.")
+    print("\n[System] Execution completed.")
