@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>直感でわかる！データ圧縮（パッキング）体験箱</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* ツールチップ用の微調整スタイル */
+    .tooltip {
+      visibility: hidden;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .group:hover .tooltip {
+      visibility: visible;
+      opacity: 1;
+    }
+    
+    /* データ転送アニメーション用 */
+    @keyframes moveRight {
+      0% { transform: translateX(0); opacity: 1; }
+      80% { opacity: 1; }
+      100% { transform: translateX(100%); opacity: 0; }
+    }
+    .packet {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      opacity: 0;
+    }
+    .packet.animating {
+      animation: moveRight 0.8s linear forwards;
+    }
+    
+    /* 画面切り替えのフェード効果 */
+    .fade-enter {
+      animation: fadeIn 0.3s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    /* サンプルコード用のスタイル */
+    pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 p-4 md:p-8 font-sans">
+  
+  <!-- ==================== メイン画面 ==================== -->
+  <div id="main-view" class="max-w-5xl mx-auto space-y-8 fade-enter block">
+    
+    <!-- ヘッダー -->
+    <div class="text-center space-y-4">
+      <h1 class="text-3xl md:text-4xl font-extrabold text-slate-800 flex items-center justify-center gap-3">
+        📦 直感でわかる！データ圧縮（パッキング）体験箱
+      </h1>
+      <p class="text-gray-700 max-w-2xl mx-auto font-medium leading-relaxed">
+        コンピューターは全ての情報を「0」と「1」の箱で記憶します。<br>
+        ここでは、<strong>9種類のバラバラなデータ</strong>を、<strong>32個の小さな箱（32bit）</strong>に隙間なく敷き詰めて、<br>
+        最終的に<strong>「たった1つの大きな数字」</strong>に変換（パッキング）する仕組みを体験できます。
+      </p>
+    </div>
+
+    <!-- コントロールパネル -->
+    <div id="controls-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <!-- JSでここにスライダーが生成されます -->
+    </div>
+
+    <!-- 32ビットのビジュアル表示 -->
+    <div class="bg-white p-6 rounded-2xl shadow-lg border border-slate-200">
+      <h2 class="text-lg font-bold text-gray-700 mb-4 flex items-center gap-2">
+        🧩 32個の小さな箱（0か1しか入りません）
+      </h2>
+      
+      <div class="overflow-x-auto pb-4">
+        <div id="bits-container" class="flex gap-1 min-w-max justify-center">
+          <!-- JSでここに32個の箱が生成されます -->
+        </div>
+      </div>
+
+      <div class="flex flex-col items-center my-6">
+        <div class="text-gray-400 animate-bounce mb-2 text-2xl">⬇️</div>
+        <p class="text-sm font-bold text-gray-500 mb-2">上の9つのデータを、すべて合体させた1つの数字</p>
+        <div id="packed-value-display" class="bg-slate-700 text-white px-8 py-4 rounded-xl text-4xl md:text-5xl font-mono font-extrabold shadow-inner break-all text-center max-w-full">
+          0
+        </div>
+      </div>
+    </div>
+
+    <!-- 視覚化シミュレーション：パッキングのメリット -->
+    <div class="bg-blue-50 p-6 rounded-2xl border-2 border-blue-200 mt-8">
+      <h2 class="text-xl font-bold text-blue-800 mb-4 flex items-center gap-2">
+        🚀 パッキングするとデータはどう動く？（通信・処理シミュレーション）
+      </h2>
+      <p class="text-gray-700 text-sm mb-6">
+        CPUからメモリへ、あるいはネットワーク経由でデータを送る場合を想像してください。<br>
+        パッキングをしない場合、9個のデータを別々に送る必要がありますが、パッキングをすれば1回の送信で完了します。
+      </p>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        
+        <!-- パッキングなしの場合 -->
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 relative overflow-hidden">
+          <h3 class="font-bold text-gray-700 mb-2 text-center text-sm">従来のやり方（バラバラに送る）</h3>
+          <div class="flex justify-between items-center text-xs text-gray-500 mb-2">
+            <span>送信元</span>
+            <span>送信先</span>
+          </div>
+          <div class="relative h-24 bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 w-full overflow-hidden" id="track-unpacked">
+            <div class="absolute right-0 top-0 bottom-0 w-12 bg-gray-200 border-l-2 border-gray-300 z-10 flex items-center justify-center">📥</div>
+          </div>
+          <div class="text-center mt-2 h-4 text-xs font-bold text-red-500" id="status-unpacked"></div>
+        </div>
+
+        <!-- パッキングありの場合 -->
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-blue-300 relative overflow-hidden shadow-blue-100">
+          <h3 class="font-bold text-blue-700 mb-2 text-center text-sm">パッキング（1つにまとめて送る）</h3>
+          <div class="flex justify-between items-center text-xs text-gray-500 mb-2">
+            <span>送信元</span>
+            <span>送信先</span>
+          </div>
+          <div class="relative h-24 bg-blue-50 rounded-lg border-2 border-dashed border-blue-300 w-full overflow-hidden" id="track-packed">
+            <div class="absolute right-0 top-0 bottom-0 w-12 bg-blue-100 border-l-2 border-blue-300 z-10 flex items-center justify-center">📥</div>
+          </div>
+          <div class="text-center mt-2 h-4 text-xs font-bold text-blue-600" id="status-packed"></div>
+        </div>
+
+      </div>
+
+      <div class="text-center mt-6">
+        <button id="btn-simulate" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform transform active:scale-95 flex items-center gap-2 mx-auto">
+          ▶️ データ送信シミュレーション開始
+        </button>
+      </div>
+    </div>
+
+    <!-- 解説コーナー -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mt-8 relative">
+      <h2 class="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+        💡 仕組みの解説
+      </h2>
+      <div class="space-y-4 text-sm md:text-base text-gray-700 mb-8">
+        <div class="flex gap-4">
+          <div class="text-2xl">⚡</div>
+          <div>
+            <h3 class="font-bold text-gray-800">なぜわざわざ「1つの数字」にまとめるのか？</h3>
+            <p>たくさんの独立したデータを扱う際、メモリへのアクセス回数やネットワークの通信回数が増えると、それが処理のボトルネック（渋滞）になります。32個のビットにデータを敷き詰めて1つの整数（32bit整数）として扱うことで、<strong>1回の処理で複数のデータを同時に移動・コピー・保存</strong>できるようになり、パフォーマンスが劇的に向上します。</p>
+          </div>
+        </div>
+        
+        <div class="flex gap-4">
+          <div class="text-2xl">📉</div>
+          <div>
+            <h3 class="font-bold text-gray-800">マイナスの数字はどうやって表現しているのか？</h3>
+            <p>上の「変化量」のスライダーをマイナスに動かしてみてください。割り当てられた領域の<strong>一番左側の箱が「1」</strong>になることがわかります。コンピューターの内部では、特別なマイナス記号を使わず、割り当てられたビット列の最上位ビット（一番左のビット）を「マイナスの目印」として扱う方法（2の補数表現）が広く用いられています。</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 詳細画面への遷移ボタン -->
+      <div class="text-center mt-6 border-t pt-6">
+        <button id="btn-show-details" class="text-slate-600 hover:text-slate-800 font-bold underline px-4 py-2 rounded-lg hover:bg-slate-100 transition-colors inline-flex items-center gap-2">
+          📖 9つのデータが持つ意味・サンプルコードを読む →
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+
+  <!-- ==================== 詳細解説画面 ==================== -->
+  <div id="details-view" class="max-w-4xl mx-auto space-y-8 hidden">
+    
+    <!-- ヘッダー -->
+    <div class="text-center space-y-4 mb-10">
+      <h1 class="text-3xl md:text-4xl font-extrabold text-slate-800 flex items-center justify-center gap-3">
+        📖 9つのデータの詳細解説
+      </h1>
+      <p class="text-gray-600 max-w-2xl mx-auto font-medium leading-relaxed">
+        32個の小さな箱（32bit）の中に詰め込まれた9つのデータが、<br>
+        実際のゲームやアプリケーションの中で「何を意味しているのか」を具体的に解説します。
+      </p>
+      <button id="btn-back-main" class="inline-block mt-4 text-blue-600 hover:text-blue-800 font-bold underline px-4 py-2 rounded-lg hover:bg-blue-50 transition-colors">
+        ← パッキング体験画面に戻る
+      </button>
+    </div>
+
+    <!-- パワー系データ -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border-l-8 border-slate-600">
+      <h2 class="text-2xl font-bold text-slate-700 mb-4 flex items-center gap-2">
+        ⚡ パワー（基本ステータス）
+      </h2>
+      <p class="text-gray-600 mb-6">
+        各2個の箱（2bit）を使用し、「0〜3」の4段階の値を表現します。主にキャラクターやアイテムの基礎的な強さ・ランクを表します。
+      </p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="p-4 bg-red-50 rounded-xl border border-red-200">
+          <h3 class="font-bold text-red-700 mb-2">パワーA (0〜1bit)</h3>
+          <p class="text-sm text-gray-700">例：<br>攻撃力のランク。<br>0=非力、1=普通、2=強い、3=最強</p>
+        </div>
+        <div class="p-4 bg-green-50 rounded-xl border border-green-200">
+          <h3 class="font-bold text-green-700 mb-2">パワーB (2〜3bit)</h3>
+          <p class="text-sm text-gray-700">例：<br>防御力のランク。<br>0=紙装甲、1=普通、2=硬い、3=鉄壁</p>
+        </div>
+        <div class="p-4 bg-blue-50 rounded-xl border border-blue-200">
+          <h3 class="font-bold text-blue-700 mb-2">パワーC (4〜5bit)</h3>
+          <p class="text-sm text-gray-700">例：<br>素早さのランク。<br>0=鈍足、1=普通、2=俊敏、3=神速</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 変化量系データ -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border-l-8 border-slate-600">
+      <h2 class="text-2xl font-bold text-slate-700 mb-4 flex items-center gap-2">
+        📈 変化量（動的パラメータ）
+      </h2>
+      <p class="text-gray-600 mb-6">
+        各6個の箱（6bit）を使用し、「-32〜31」の値を表現します。最上位ビットをマイナスの目印として使うことで、増減（バフ・デバフ）や相対的な移動を表現できます。
+      </p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="p-4 bg-red-50 rounded-xl border border-red-200">
+          <h3 class="font-bold text-red-700 mb-2">変化量A (6〜11bit)</h3>
+          <p class="text-sm text-gray-700">例：HPの増減量。<br>+10なら回復、-15ならダメージ。<br>またはX軸への移動距離。</p>
+        </div>
+        <div class="p-4 bg-green-50 rounded-xl border border-green-200">
+          <h3 class="font-bold text-green-700 mb-2">変化量B (12〜17bit)</h3>
+          <p class="text-sm text-gray-700">例：スタミナの増減量。<br>走ると減り、休むと回復する。<br>またはY軸への移動距離。</p>
+        </div>
+        <div class="p-4 bg-blue-50 rounded-xl border border-blue-200">
+          <h3 class="font-bold text-blue-700 mb-2">変化量C (18〜23bit)</h3>
+          <p class="text-sm text-gray-700">例：魔力・エネルギーの増減。<br>スキルの効果時間（残り時間）のカウントダウン（マイナス変化）など。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 状態・ダメージ・予備 -->
+    <div class="bg-white p-6 rounded-2xl shadow-sm border-l-8 border-slate-600">
+      <h2 class="text-2xl font-bold text-slate-700 mb-4 flex items-center gap-2">
+        ⚙️ 状態・🛡️ ダメージ・🧳 予備ポケット
+      </h2>
+      <p class="text-gray-600 mb-6">
+        キャラクターの現在の状況や、システム拡張のためのフラグ（目印）として機能します。
+      </p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        
+        <div class="p-4 bg-yellow-50 rounded-xl border border-yellow-200">
+          <h3 class="font-bold text-yellow-700 mb-2">状態 (24〜26bit)</h3>
+          <p class="text-sm text-gray-700">
+            現在のモードや状態異常など、最大8種類を区別します。<br><br>
+            0: 正常<br>
+            1: 毒状態<br>
+            ...など
+          </p>
+        </div>
+
+        <div class="p-4 bg-purple-50 rounded-xl border border-purple-200">
+          <h3 class="font-bold text-purple-700 mb-2">ダメージ (27〜29bit)</h3>
+          <p class="text-sm text-gray-700">
+            受けているダメージの重症度や属性。<br><br>
+            0: 無傷<br>
+            7: 致命傷（属性IDなど）
+          </p>
+        </div>
+
+        <div class="p-4 bg-slate-100 rounded-xl border border-slate-300">
+          <h3 class="font-bold text-slate-700 mb-2">予備 (30〜31bit)</h3>
+          <p class="text-sm text-gray-700">
+            現在は使われていない空きスペースです。将来の機能拡張のために確保されています。
+          </p>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 💻 サンプルコードセクション -->
+    <div class="bg-gray-900 text-gray-100 p-6 rounded-2xl shadow-xl mt-8 border border-gray-700">
+      <h2 class="text-2xl font-bold mb-4 flex items-center gap-2 text-blue-400">
+        💻 実際のプログラムでの書き方（JavaScript例）
+      </h2>
+      <p class="text-sm text-gray-400 mb-4">
+        シフト演算子（<code>&lt;&lt;</code>、<code>&gt;&gt;</code>）と論理積（<code>&amp;</code>）、論理和（<code>|</code>）を使って、データの出し入れを行います。
+      </p>
+
+      <div class="space-y-6">
+        <!-- パッキングのコード -->
+        <div>
+          <h3 class="text-lg font-bold text-green-400 mb-2">1. データを1つの数字にまとめる（パッキング）</h3>
+          <div class="bg-gray-800 p-4 rounded-lg overflow-x-auto">
+<pre><code class="text-sm font-mono text-gray-300"><span class="text-purple-400">const</span> <span class="text-blue-300">packData</span> = (pA, pB, pC, cA, cB, cC, st, dm, rs) => {
+  <span class="text-gray-500">// マイナス値(-32〜31)を、6bitで表現できる正の数(0〜63)に変換する魔法の関数</span>
+  <span class="text-purple-400">const</span> <span class="text-blue-300">enc6</span> = (v) => (v < <span class="text-orange-400">0</span> ? v + <span class="text-orange-400">64</span> : v) & <span class="text-orange-400">0x3F</span>;
+
+  <span class="text-purple-400">return</span> (
+    (pA & <span class="text-orange-400">0x3</span>) |                  <span class="text-gray-500">// 0〜1bit目 (2bit)</span>
+    ((pB & <span class="text-orange-400">0x3</span>) << <span class="text-orange-400">2</span>) |           <span class="text-gray-500">// 2〜3bit目へ左に2ずらす</span>
+    ((pC & <span class="text-orange-400">0x3</span>) << <span class="text-orange-400">4</span>) |           <span class="text-gray-500">// 4〜5bit目へ左に4ずらす</span>
+    (<span class="text-blue-300">enc6</span>(cA) << <span class="text-orange-400">6</span>) |             <span class="text-gray-500">// 6〜11bit目 (6bit)</span>
+    (<span class="text-blue-300">enc6</span>(cB) << <span class="text-orange-400">12</span>) |            <span class="text-gray-500">// 12〜17bit目</span>
+    (<span class="text-blue-300">enc6</span>(cC) << <span class="text-orange-400">18</span>) |            <span class="text-gray-500">// 18〜23bit目</span>
+    ((st & <span class="text-orange-400">0x7</span>) << <span class="text-orange-400">24</span>) |          <span class="text-gray-500">// 24〜26bit目 (3bit)</span>
+    ((dm & <span class="text-orange-400">0x7</span>) << <span class="text-orange-400">27</span>) |          <span class="text-gray-500">// 27〜29bit目 (3bit)</span>
+    ((rs & <span class="text-orange-400">0x3</span>) << <span class="text-orange-400">30</span>)            <span class="text-gray-500">// 30〜31bit目 (2bit)</span>
+  ) >>> <span class="text-orange-400">0</span>; <span class="text-gray-500">// 最後に符号なし32bit整数として確定させる</span>
+};</code></pre>
+          </div>
+        </div>
+
+        <!-- アンパッキングのコード -->
+        <div>
+          <h3 class="text-lg font-bold text-yellow-400 mb-2">2. 1つの数字からデータを取り出す（アンパッキング）</h3>
+          <div class="bg-gray-800 p-4 rounded-lg overflow-x-auto">
+<pre><code class="text-sm font-mono text-gray-300"><span class="text-purple-400">const</span> <span class="text-blue-300">unpackData</span> = (packedValue) => {
+  <span class="text-gray-500">// 6bitの値(0〜63)を取り出した後、マイナスを含む元の値(-32〜31)に戻す関数</span>
+  <span class="text-purple-400">const</span> <span class="text-blue-300">dec6</span> = (v) => (v & <span class="text-orange-400">0x20</span> ? v - <span class="text-orange-400">64</span> : v); <span class="text-gray-500">// 最上位ビット(32)が立っていればマイナス</span>
+
+  <span class="text-purple-400">return</span> {
+    <span class="text-blue-200">pA</span>: packedValue & <span class="text-orange-400">0x3</span>,                 <span class="text-gray-500">// 一番右の2bitを取り出す</span>
+    <span class="text-blue-200">pB</span>: (packedValue >>> <span class="text-orange-400">2</span>) & <span class="text-orange-400">0x3</span>,         <span class="text-gray-500">// 右に2ずらして2bit取り出す</span>
+    <span class="text-blue-200">pC</span>: (packedValue >>> <span class="text-orange-400">4</span>) & <span class="text-orange-400">0x3</span>,
+    <span class="text-blue-200">cA</span>: <span class="text-blue-300">dec6</span>((packedValue >>> <span class="text-orange-400">6</span>) & <span class="text-orange-400">0x3F</span>),  <span class="text-gray-500">// 6ずらして6bit分(0x3F)取り出し、元に戻す</span>
+    <span class="text-blue-200">cB</span>: <span class="text-blue-300">dec6</span>((packedValue >>> <span class="text-orange-400">12</span>) & <span class="text-orange-400">0x3F</span>),
+    <span class="text-blue-200">cC</span>: <span class="text-blue-300">dec6</span>((packedValue >>> <span class="text-orange-400">18</span>) & <span class="text-orange-400">0x3F</span>),
+    <span class="text-blue-200">st</span>: (packedValue >>> <span class="text-orange-400">24</span>) & <span class="text-orange-400">0x7</span>,        <span class="text-gray-500">// 24ずらして3bit分(0x7)取り出す</span>
+    <span class="text-blue-200">dm</span>: (packedValue >>> <span class="text-orange-400">27</span>) & <span class="text-orange-400">0x7</span>,
+    <span class="text-blue-200">rs</span>: (packedValue >>> <span class="text-orange-400">30</span>) & <span class="text-orange-400">0x3</span>         <span class="text-gray-500">// 30ずらして2bit取り出す</span>
+  };
+};</code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+  </div>
+
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      
+      // ==========================================
+      // 画面切り替えのロジック
+      // ==========================================
+      const mainView = document.getElementById('main-view');
+      const detailsView = document.getElementById('details-view');
+      const btnShowDetails = document.getElementById('btn-show-details');
+      const btnBackMain = document.getElementById('btn-back-main');
+
+      btnShowDetails.addEventListener('click', () => {
+        mainView.classList.replace('block', 'hidden');
+        detailsView.classList.replace('hidden', 'block');
+        detailsView.classList.add('fade-enter'); // フェードアニメーション
+        window.scrollTo(0, 0); // 画面トップへ移動
+      });
+
+      btnBackMain.addEventListener('click', () => {
+        detailsView.classList.replace('block', 'hidden');
+        mainView.classList.replace('hidden', 'block');
+        mainView.classList.add('fade-enter');
+        window.scrollTo(0, 0);
+      });
+
+      // ==========================================
+      // 以降、メイン画面のパッキング計算・アニメーション処理
+      // ==========================================
+      
+      const controlsData = [
+        { id: 'powerA', title: 'パワーA', emoji: '⚡', min: 0, max: 3, val: 1, color: 'bg-red-600', borderColor: 'border-red-600', textColor: 'text-red-700', desc: '2個の箱を使用 (0〜3)' },
+        { id: 'powerB', title: 'パワーB', emoji: '⚡', min: 0, max: 3, val: 2, color: 'bg-green-600', borderColor: 'border-green-600', textColor: 'text-green-700', desc: '2個の箱を使用 (0〜3)' },
+        { id: 'powerC', title: 'パワーC', emoji: '⚡', min: 0, max: 3, val: 0, color: 'bg-blue-600', borderColor: 'border-blue-600', textColor: 'text-blue-700', desc: '2個の箱を使用 (0〜3)' },
+        
+        { id: 'changeA', title: '変化量A', emoji: '📈', min: -32, max: 31, val: 10, color: 'bg-red-400', borderColor: 'border-red-400', textColor: 'text-red-600', desc: '6個の箱を使用 (-32〜31)' },
+        { id: 'changeB', title: '変化量B', emoji: '📈', min: -32, max: 31, val: -5, color: 'bg-green-400', borderColor: 'border-green-400', textColor: 'text-green-600', desc: '6個の箱を使用 (-32〜31)' },
+        { id: 'changeC', title: '変化量C', emoji: '📈', min: -32, max: 31, val: 0, color: 'bg-blue-400', borderColor: 'border-blue-400', textColor: 'text-blue-600', desc: '6個の箱を使用 (-32〜31)' },
+        
+        { id: 'status', title: '状態', emoji: '⚙️', min: 0, max: 7, val: 1, color: 'bg-yellow-500', borderColor: 'border-yellow-500', textColor: 'text-yellow-600', desc: '3個の箱を使用 (0〜7)' },
+        { id: 'damage', title: 'ダメージ', emoji: '🛡️', min: 0, max: 7, val: 0, color: 'bg-purple-500', borderColor: 'border-purple-500', textColor: 'text-purple-600', desc: '3個の箱を使用 (0〜7)' },
+        { id: 'reserve', title: '予備ポケット', emoji: '🧳', min: 0, max: 3, val: 0, color: 'bg-slate-500', borderColor: 'border-slate-500', textColor: 'text-slate-600', desc: '2個の箱を使用 (0〜3)' },
+      ];
+
+      const state = {};
+      controlsData.forEach(c => state[c.id] = c.val);
+
+      const controlsContainer = document.getElementById('controls-container');
+      controlsData.forEach(control => {
+        const card = document.createElement('div');
+        card.className = `p-4 rounded-xl shadow-sm border-t-4 bg-white ${control.borderColor}`;
+        card.innerHTML = `
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-lg">${control.emoji}</span>
+            <h3 class="font-bold text-gray-700">${control.title}</h3>
+            <span id="val-${control.id}" class="ml-auto font-mono bg-gray-100 px-2 py-1 rounded text-sm text-gray-800 font-bold">${control.val}</span>
+          </div>
+          <p class="text-xs text-gray-500 mb-3">${control.desc}</p>
+          <input
+            type="range"
+            id="input-${control.id}"
+            min="${control.min}"
+            max="${control.max}"
+            value="${control.val}"
+            class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+          />
+          <div class="flex justify-between text-xs text-gray-400 mt-1">
+            <span>${control.min}</span>
+            <span>${control.max}</span>
+          </div>
+        `;
+        controlsContainer.appendChild(card);
+
+        document.getElementById(`input-${control.id}`).addEventListener('input', (e) => {
+          const val = parseInt(e.target.value);
+          state[control.id] = val;
+          document.getElementById(`val-${control.id}`).textContent = val;
+          updatePacking();
+        });
+      });
+
+      const bitsContainer = document.getElementById('bits-container');
+      const bitElements = [];
+
+      for (let i = 31; i >= 0; i--) {
+        let color = '';
+        let label = '';
+
+        if (i >= 30) { color = 'bg-slate-500'; label = '予備ポケット'; }
+        else if (i >= 27) { color = 'bg-purple-500'; label = 'ダメージ'; }
+        else if (i >= 24) { color = 'bg-yellow-500'; label = '状態'; }
+        else if (i >= 18) { color = 'bg-blue-400'; label = '変化量C'; }
+        else if (i >= 12) { color = 'bg-green-400'; label = '変化量B'; }
+        else if (i >= 6) { color = 'bg-red-400'; label = '変化量A'; }
+        else if (i >= 4) { color = 'bg-blue-600'; label = 'パワーC'; }
+        else if (i >= 2) { color = 'bg-green-600'; label = 'パワーB'; }
+        else { color = 'bg-red-600'; label = 'パワーA'; }
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'flex flex-col items-center group relative';
+        
+        wrapper.innerHTML = `
+          <span class="text-[10px] text-gray-400 mb-1">${i}</span>
+          <div id="bit-${i}" class="w-6 h-10 flex items-center justify-center font-bold text-white rounded-sm shadow-inner transition-all duration-300 ${color} opacity-40 scale-95">
+            0
+          </div>
+          <div class="tooltip absolute bottom-full mb-2 w-max bg-gray-800 text-white text-xs py-1 px-2 rounded z-20">
+            ${label} (箱番号: ${i})
+          </div>
+        `;
+        bitsContainer.appendChild(wrapper);
+        bitElements[i] = document.getElementById(`bit-${i}`);
+      }
+
+      function updatePacking() {
+        const encode6Bit = (val) => (val < 0 ? val + 64 : val) & 0x3F;
+
+        const pA = state.powerA & 0x3;
+        const pB = (state.powerB & 0x3) << 2;
+        const pC = (state.powerC & 0x3) << 4;
+        const cA = encode6Bit(state.changeA) << 6;
+        const cB = encode6Bit(state.changeB) << 12;
+        const cC = encode6Bit(state.changeC) << 18;
+        const st = (state.status & 0x7) << 24;
+        const dm = (state.damage & 0x7) << 27;
+        const rs = (state.reserve & 0x3) << 30;
+
+        const combined = (pA | pB | pC | cA | cB | cC | st | dm | rs) >>> 0;
+        document.getElementById('packed-value-display').textContent = combined;
+
+        for (let i = 31; i >= 0; i--) {
+          const bitValue = (combined >>> i) & 1;
+          const el = bitElements[i];
+          el.textContent = bitValue;
+          if (bitValue === 1) {
+            el.classList.remove('opacity-40', 'scale-95');
+            el.classList.add('opacity-100', 'scale-105');
+          } else {
+            el.classList.add('opacity-40', 'scale-95');
+            el.classList.remove('opacity-100', 'scale-105');
+          }
+        }
+      }
+
+      updatePacking();
+
+      const btnSimulate = document.getElementById('btn-simulate');
+      const trackUnpacked = document.getElementById('track-unpacked');
+      const trackPacked = document.getElementById('track-packed');
+      const statusUnpacked = document.getElementById('status-unpacked');
+      const statusPacked = document.getElementById('status-packed');
+
+      let isSimulating = false;
+
+      btnSimulate.addEventListener('click', () => {
+        if (isSimulating) return;
+        isSimulating = true;
+        btnSimulate.disabled = true;
+        btnSimulate.classList.add('opacity-50', 'cursor-not-allowed');
+
+        document.querySelectorAll('.packet').forEach(e => e.remove());
+        statusUnpacked.textContent = '送信中...';
+        statusPacked.textContent = '送信中...';
+
+        let unpackedCount = 0;
+        const sendUnpackedPacket = (index) => {
+          const packet = document.createElement('div');
+          const colorClass = controlsData[index].color;
+          packet.className = `packet w-8 h-8 rounded ${colorClass} text-white text-[10px] font-bold flex items-center justify-center shadow-md border-2 border-white z-0`;
+          packet.textContent = `D${index+1}`;
+          
+          const trackWidth = trackUnpacked.clientWidth;
+          packet.style.transform = `translateX(0px) translateY(-50%)`;
+          trackUnpacked.appendChild(packet);
+
+          packet.animate([
+            { transform: `translateX(0px) translateY(-50%)`, opacity: 1 },
+            { opacity: 1, offset: 0.8 },
+            { transform: `translateX(${trackWidth - 40}px) translateY(-50%)`, opacity: 0 }
+          ], {
+            duration: 600,
+            easing: 'linear',
+            fill: 'forwards'
+          }).onfinish = () => {
+            unpackedCount++;
+            if(unpackedCount === 9) {
+              statusUnpacked.textContent = '❌ 送信完了（9回の通信・遅延発生）';
+            }
+          };
+        };
+
+        for (let i = 0; i < 9; i++) {
+          setTimeout(() => sendUnpackedPacket(i), i * 200);
+        }
+
+        const sendPackedPacket = () => {
+          const packet = document.createElement('div');
+          packet.className = `packet w-24 h-10 rounded bg-slate-700 text-white text-xs font-bold flex items-center justify-center shadow-lg border-2 border-white z-0`;
+          packet.textContent = `パッキング済`;
+          
+          const trackWidth = trackPacked.clientWidth;
+          packet.style.transform = `translateX(0px) translateY(-50%)`;
+          trackPacked.appendChild(packet);
+
+          packet.animate([
+            { transform: `translateX(0px) translateY(-50%)`, opacity: 1 },
+            { opacity: 1, offset: 0.8 },
+            { transform: `translateX(${trackWidth - 96}px) translateY(-50%)`, opacity: 0 }
+          ], {
+            duration: 600,
+            easing: 'linear',
+            fill: 'forwards'
+          }).onfinish = () => {
+            statusPacked.textContent = '✅ 送信完了（1回の通信・超高速！）';
+            
+            setTimeout(() => {
+              isSimulating = false;
+              btnSimulate.disabled = false;
+              btnSimulate.classList.remove('opacity-50', 'cursor-not-allowed');
+            }, 1000);
+          };
+        };
+
+        sendPackedPacket();
+      });
+    });
+  </script>
+</body>
+</html>
