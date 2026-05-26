@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>確率雲（Probability Cloud）シミュレーター</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #0f172a; /* Tailwind slate-900 */
+      color: #f8fafc;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 0;
+    }
+    .glass-panel {
+      background: rgba(30, 41, 59, 0.7);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    /* カスタムスクロールバー */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2); 
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2); 
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.4); 
+    }
+  </style>
+</head>
+<body>
+
+  <!-- キャンバスエリア -->
+  <div id="canvas-container">
+    <canvas id="simCanvas"></canvas>
+  </div>
+
+  <!-- UIパネル -->
+  <div class="absolute top-4 left-4 w-[calc(100%-2rem)] md:w-96 glass-panel rounded-2xl p-6 shadow-2xl z-10 flex flex-col gap-4 pointer-events-auto">
+    
+    <div>
+      <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-500 mb-1">
+        視界による実体化デモ
+      </h1>
+      <p class="text-sm text-slate-300 leading-relaxed">
+        マウス（または指）の周囲だけが「観測領域」です。<br>
+        見ていない場所は<strong>「ぼんやりした雲」</strong>として計算を省略し、見た瞬間だけ中身が<strong>「個別の実体」</strong>として動き出します。これにより極限まで計算負荷を下げます。
+      </p>
+    </div>
+
+    <!-- ステータス表示 -->
+    <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50 flex flex-col gap-3">
+      <div class="flex justify-between items-end">
+        <span class="text-xs text-slate-400 font-semibold tracking-wider">総オブジェクト数</span>
+        <span class="text-lg font-mono font-bold text-slate-200" id="stat-total">0</span>
+      </div>
+      
+      <div class="space-y-1">
+        <div class="flex justify-between items-end">
+          <span class="text-xs text-slate-400">現在計算している実体数</span>
+          <span class="text-sm font-mono text-cyan-400" id="stat-active">0</span>
+        </div>
+        <div class="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+          <div id="bar-active" class="bg-cyan-400 h-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+      </div>
+
+      <div class="space-y-1">
+        <div class="flex justify-between items-end">
+          <span class="text-xs text-slate-400">計算を省略できた割合</span>
+          <span class="text-sm font-mono text-emerald-400" id="stat-saved">0%</span>
+        </div>
+        <div class="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+          <div id="bar-saved" class="bg-emerald-400 h-full transition-all duration-300" style="width: 100%"></div>
+        </div>
+      </div>
+    </div>
+
+    <button id="btn-code" class="mt-2 w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+      仕組みのコードを見る
+    </button>
+  </div>
+
+  <!-- コードモーダル -->
+  <div id="code-modal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-300">
+    <div class="glass-panel w-full max-w-2xl rounded-2xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div class="px-6 py-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/80">
+        <h2 class="text-lg font-bold flex items-center gap-2 text-slate-200">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-cyan-400"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+          コアロジック（疑似コード）
+        </h2>
+        <button id="btn-close-modal" class="text-slate-400 hover:text-white transition-colors">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="p-6 overflow-auto text-sm font-mono text-slate-300 leading-relaxed bg-[#0d1117]">
+<pre><code><span class="text-slate-500">// 毎フレーム実行される更新処理</span>
+<span class="text-purple-400">function</span> <span class="text-blue-400">updateSystem</span>() {
+  <span class="text-purple-400">for</span> (<span class="text-purple-400">let</span> cloud <span class="text-purple-400">of</span> clouds) {
+    <span class="text-slate-500">// 視界（カメラ/マウス）との距離を計算</span>
+    <span class="text-purple-400">let</span> dist = <span class="text-blue-400">getDistance</span>(cloud.x, cloud.y, camera.x, camera.y);
+
+    <span class="text-purple-400">if</span> (dist > viewRadius) {
+      <span class="text-slate-500">// 【確率雲への圧縮】</span>
+      <span class="text-slate-500">// 視界の外なら、詳細な計算をスキップして「雲」としてまとめて描画</span>
+      <span class="text-blue-400">drawCloud</span>(cloud);
+      <span class="text-purple-400">continue</span>; <span class="text-slate-500">// ← ここで処理を打ち切るのが超軽量化の鍵！</span>
+    }
+
+    <span class="text-slate-500">// 【観測による実体化】</span>
+    <span class="text-slate-500">// 視界に入った雲の中身（何百もの個体）を展開し、それぞれ計算する</span>
+    <span class="text-purple-400">for</span> (<span class="text-purple-400">let</span> i = <span class="text-orange-400">0</span>; i < cloud.particleCount; i++) {
+      <span class="text-purple-400">let</span> particle = cloud.particles[i];
+      
+      <span class="text-slate-500">// 重い物理演算や状態の更新を実行</span>
+      particle.<span class="text-blue-400">updatePhysics</span>();
+      
+      <span class="text-slate-500">// 個別の実体として描画</span>
+      <span class="text-blue-400">drawParticle</span>(particle);
+    }
+  }
+}</code></pre>
+      </div>
+      <div class="px-6 py-4 bg-slate-800/80 border-t border-slate-700 text-xs text-slate-400">
+        ※ 実際の設計では、これらをGPU（Compute Shader）や固定長配列（Zero-Allocation）を用いてさらに極限まで高速化しています。
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // UI要素
+    const elTotal = document.getElementById('stat-total');
+    const elActive = document.getElementById('stat-active');
+    const elSaved = document.getElementById('stat-saved');
+    const barActive = document.getElementById('bar-active');
+    const barSaved = document.getElementById('bar-saved');
+    
+    // モーダル制御
+    const modal = document.getElementById('code-modal');
+    document.getElementById('btn-code').addEventListener('click', () => {
+      modal.classList.remove('opacity-0', 'pointer-events-none');
+    });
+    document.getElementById('btn-close-modal').addEventListener('click', () => {
+      modal.classList.add('opacity-0', 'pointer-events-none');
+    });
+
+    // シミュレーション設定
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+
+    const NUM_CLOUDS = window.innerWidth > 768 ? 150 : 60; // 画面サイズで雲の数を調整
+    const PARTICLES_PER_CLOUD = 100;
+    const TOTAL_PARTICLES = NUM_CLOUDS * PARTICLES_PER_CLOUD;
+    const VIEW_RADIUS = 200; // 視界の半径
+
+    elTotal.textContent = TOTAL_PARTICLES.toLocaleString();
+
+    // マウス/視界の位置
+    const pointer = { x: width / 2, y: height / 2 };
+
+    window.addEventListener('resize', () => {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width;
+      canvas.height = height;
+    });
+
+    // ポインターイベント（マウス＆タッチ）
+    const updatePointer = (e) => {
+      if (e.touches && e.touches.length > 0) {
+        pointer.x = e.touches[0].clientX;
+        pointer.y = e.touches[0].clientY;
+      } else {
+        pointer.x = e.clientX;
+        pointer.y = e.clientY;
+      }
+    };
+    window.addEventListener('mousemove', updatePointer);
+    window.addEventListener('touchmove', updatePointer, { passive: true });
+    window.addEventListener('touchstart', updatePointer, { passive: true });
+
+    // データ構造（固定長配列を用いたZero-Allocationの模倣）
+    // 雲データ: [x, y, radius]
+    const clouds = new Float32Array(NUM_CLOUDS * 3);
+    
+    // パーティクルデータ: [x, y, vx, vy, baseX, baseY]
+    const STRIDE = 6;
+    const particles = new Float32Array(TOTAL_PARTICLES * STRIDE);
+
+    // 初期化
+    for (let i = 0; i < NUM_CLOUDS; i++) {
+      // 画面全体に散らす
+      const cx = Math.random() * width;
+      const cy = Math.random() * height;
+      const radius = 30 + Math.random() * 20;
+
+      clouds[i * 3 + 0] = cx;
+      clouds[i * 3 + 1] = cy;
+      clouds[i * 3 + 2] = radius;
+
+      // この雲に属するパーティクルを初期化
+      for (let j = 0; j < PARTICLES_PER_CLOUD; j++) {
+        const pIdx = (i * PARTICLES_PER_CLOUD + j) * STRIDE;
+        // 雲の中心付近に配置
+        const angle = Math.random() * Math.PI * 2;
+        const dist = Math.random() * radius;
+        particles[pIdx + 0] = cx + Math.cos(angle) * dist; // x
+        particles[pIdx + 1] = cy + Math.sin(angle) * dist; // y
+        particles[pIdx + 2] = (Math.random() - 0.5) * 4;   // vx
+        particles[pIdx + 3] = (Math.random() - 0.5) * 4;   // vy
+        particles[pIdx + 4] = cx;                          // baseX
+        particles[pIdx + 5] = cy;                          // baseY
+      }
+    }
+
+    // 描画補助関数
+    function drawCloudGradient(x, y, radius) {
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, radius * 1.5);
+      grad.addColorStop(0, 'rgba(56, 189, 248, 0.15)'); // 中心
+      grad.addColorStop(0.5, 'rgba(56, 189, 248, 0.05)'); 
+      grad.addColorStop(1, 'rgba(56, 189, 248, 0)');    // 外縁
+      
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // メインループ
+    function animate() {
+      // 画面クリア（少し残像を残す）
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.3)';
+      ctx.fillRect(0, 0, width, height);
+
+      let activeParticles = 0;
+
+      // 視界領域のハイライト描画
+      const viewGrad = ctx.createRadialGradient(pointer.x, pointer.y, 0, pointer.x, pointer.y, VIEW_RADIUS);
+      viewGrad.addColorStop(0, 'rgba(255, 255, 255, 0.05)');
+      viewGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = viewGrad;
+      ctx.beginPath();
+      ctx.arc(pointer.x, pointer.y, VIEW_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 各雲の処理
+      for (let i = 0; i < NUM_CLOUDS; i++) {
+        const cx = clouds[i * 3 + 0];
+        const cy = clouds[i * 3 + 1];
+        const radius = clouds[i * 3 + 2];
+
+        // マウスとの距離
+        const dx = cx - pointer.x;
+        const dy = cy - pointer.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > VIEW_RADIUS + radius) {
+          // 【視界外】計算をサボり、雲としてまとめて描画するだけ
+          drawCloudGradient(cx, cy, radius);
+        } else {
+          // 【視界内】観測された！中身を実体化して個別に物理演算する
+          ctx.fillStyle = '#bae6fd'; // 実体の色
+          ctx.beginPath();
+          
+          for (let j = 0; j < PARTICLES_PER_CLOUD; j++) {
+            const pIdx = (i * PARTICLES_PER_CLOUD + j) * STRIDE;
+            let px = particles[pIdx + 0];
+            let py = particles[pIdx + 1];
+            let vx = particles[pIdx + 2];
+            let vy = particles[pIdx + 3];
+            let bx = particles[pIdx + 4];
+            let by = particles[pIdx + 5];
+
+            // 物理演算（更新）
+            px += vx;
+            py += vy;
+
+            // 中心（baseX, baseY）へ引き戻す力
+            vx += (bx - px) * 0.02;
+            vy += (by - py) * 0.02;
+
+            // 摩擦・減衰
+            vx *= 0.92;
+            vy *= 0.92;
+
+            // うごめくノイズ
+            vx += (Math.random() - 0.5) * 1.5;
+            vy += (Math.random() - 0.5) * 1.5;
+
+            // 配列に保存
+            particles[pIdx + 0] = px;
+            particles[pIdx + 1] = py;
+            particles[pIdx + 2] = vx;
+            particles[pIdx + 3] = vy;
+
+            // 実体として描画
+            ctx.moveTo(px, py);
+            ctx.arc(px, py, 1.2, 0, Math.PI * 2);
+            activeParticles++;
+          }
+          ctx.fill();
+        }
+      }
+
+      // UIの更新（毎フレームだと重いので適度に間引くことも可能ですが、今回はそのまま）
+      const activeRatio = (activeParticles / TOTAL_PARTICLES) * 100;
+      const savedRatio = 100 - activeRatio;
+
+      elActive.textContent = activeParticles.toLocaleString();
+      elSaved.textContent = savedRatio.toFixed(1) + '%';
+      
+      barActive.style.width = `${activeRatio}%`;
+      barSaved.style.width = `${savedRatio}%`;
+
+      requestAnimationFrame(animate);
+    }
+
+    // アニメーション開始
+    animate();
+  </script>
+</body>
+</html>
