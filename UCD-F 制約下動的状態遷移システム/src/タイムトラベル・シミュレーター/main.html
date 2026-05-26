@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>タイムトラベル・シミュレーター</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* ゲームエリアのスタイル */
+        #game-board {
+            background-image: linear-gradient(to right, #e5e7eb 1px, transparent 1px);
+            background-size: 40px 100%;
+        }
+        .character {
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        /* スクロールバーのカスタマイズ */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen flex flex-col">
+
+    <!-- ヘッダー -->
+    <header class="bg-indigo-600 text-white p-6 shadow-md">
+        <div class="max-w-6xl mx-auto flex items-center gap-3">
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <h1 class="text-2xl font-bold tracking-tight">タイムトラベル・シミュレーター</h1>
+        </div>
+    </header>
+
+    <!-- メインコンテンツ -->
+    <main class="flex-grow max-w-6xl mx-auto w-full p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- 左カラム：プレイエリアとコントローラー -->
+        <div class="lg:col-span-7 flex flex-col gap-6">
+            
+            <!-- ゲーム画面 -->
+            <section class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="p-4 bg-slate-100 border-b border-slate-200 flex justify-between items-center">
+                    <h2 class="font-semibold text-slate-700">プレイエリア</h2>
+                    <span id="step-badge" class="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium">現在: 0 歩目</span>
+                </div>
+                
+                <div class="relative h-48 bg-slate-50 overflow-hidden" id="game-board">
+                    <!-- 中央の基準線 -->
+                    <div class="absolute left-1/2 top-0 bottom-0 w-0.5 bg-slate-300 -translate-x-1/2 border-dashed border-l-2"></div>
+                    
+                    <!-- キャラクター -->
+                    <div id="character" class="character absolute top-1/2 left-1/2 w-10 h-10 -mt-5 -ml-5 bg-indigo-500 rounded-xl shadow-lg flex items-center justify-center text-white">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    </div>
+                </div>
+
+                <!-- コントローラー -->
+                <div class="p-6 bg-white flex justify-center gap-4">
+                    <button onclick="handleAction('LEFT')" class="flex-1 max-w-[120px] py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors active:scale-95 flex items-center justify-center gap-2 border border-slate-300 shadow-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                        左へ
+                    </button>
+                    <button onclick="handleAction('RIGHT')" class="flex-1 max-w-[120px] py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold rounded-xl transition-colors active:scale-95 flex items-center justify-center gap-2 shadow-sm">
+                        右へ
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                    </button>
+                </div>
+            </section>
+
+            <!-- タイムマシン（時間遡行スライダー） -->
+            <section class="bg-amber-50 rounded-2xl shadow-sm border border-amber-200 p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <svg class="text-amber-600" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <h2 class="font-bold text-amber-900 text-lg">タイムマシン（時間の巻き戻し）</h2>
+                </div>
+                <p class="text-amber-800 text-sm mb-4">スライダーを動かして過去に戻ってみましょう。過去に戻った状態で新しい操作をすると、<strong class="font-bold">新しい未来が上書き（分岐）</strong>されます。</p>
+                
+                <input type="range" id="time-slider" min="0" max="0" value="0" class="w-full h-3 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600 mb-2" oninput="handleTimeTravel(this.value)">
+                
+                <div class="flex justify-between text-xs text-amber-700 font-medium px-1">
+                    <span>過去 (0歩目)</span>
+                    <span id="slider-current-label">現在 (0歩目)</span>
+                </div>
+            </section>
+        </div>
+
+        <!-- 右カラム：履歴と解説 -->
+        <div class="lg:col-span-5 flex flex-col gap-6">
+            
+            <!-- 操作履歴（ロギング） -->
+            <section class="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-64 lg:h-auto lg:flex-1">
+                <div class="p-4 border-b border-slate-200">
+                    <h2 class="font-semibold text-slate-700 flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                        操作の記録 (入力履歴)
+                    </h2>
+                </div>
+                <div class="p-4 overflow-y-auto flex-1 bg-slate-50">
+                    <ul id="history-list" class="space-y-2 text-sm">
+                        <li class="text-slate-400 italic text-center py-4">まだ操作の記録はありません</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- 仕組みの解説 -->
+            <section class="bg-slate-800 rounded-2xl shadow-sm overflow-hidden text-slate-300 text-sm">
+                <div class="p-4 border-b border-slate-700 bg-slate-900">
+                    <h2 class="font-semibold text-white">💡 この仕組みはどう動いている？</h2>
+                </div>
+                <div class="p-4 space-y-4">
+                    <p>このアプリは、毎回の「キャラクターの位置」を保存していません。代わりに、<strong>「初期状態」</strong>と<strong>「ボタンを押した履歴」</strong>だけを記録しています。</p>
+                    <p>過去に戻る時や状態を復元する時は、記録された履歴を超高速で再実行して、現在の状態を計算しています。これによりメモリを大幅に節約し、正確な巻き戻しを可能にしています。</p>
+                    
+                    <div class="bg-slate-950 p-3 rounded-lg font-mono text-xs overflow-x-auto text-green-400">
+<pre><code><span class="text-slate-500">// 1. 操作の記録だけを保存</span>
+let history = [
+  { step: 1, action: 'RIGHT' },
+  { step: 2, action: 'LEFT' }
+];
+
+<span class="text-slate-500">// 2. 指定した時間(ステップ)の状態を再計算</span>
+function getStateAt(targetStep) {
+  let x = 0; <span class="text-slate-500">// 初期位置</span>
+  
+  for (let record of history) {
+    if (record.step > targetStep) break;
+    if (record.action === 'RIGHT') x += 40;
+    if (record.action === 'LEFT')  x -= 40;
+  }
+  
+  return x; <span class="text-slate-500">// 計算された位置を返す</span>
+}</code></pre>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+    </main>
+
+    <script>
+        // === アプリのコアとなる状態（State） ===
+        const STEP_SIZE = 40; // 1歩の移動距離(px)
+        
+        // 状態を毎コマ保存するのではなく、「入力」のみを保存する（決定論的入力ロギング）
+        let inputHistory = []; 
+        let currentStep = 0;   // 現在表示している時間(ステップ)
+        let maxStep = 0;       // 今まで進んだ最大の時間
+
+        // === 要素の取得 ===
+        const characterEl = document.getElementById('character');
+        const stepBadgeEl = document.getElementById('step-badge');
+        const sliderEl = document.getElementById('time-slider');
+        const sliderLabelEl = document.getElementById('slider-current-label');
+        const historyListEl = document.getElementById('history-list');
+
+        // === コアロジック ===
+
+        // ボタンが押された時の処理 (Action)
+        function handleAction(actionType) {
+            // もし過去に戻っている状態で新しい操作をした場合、
+            // 現在のステップより未来の履歴は破棄（新しい未来への分岐）
+            if (currentStep < inputHistory.length) {
+                inputHistory = inputHistory.filter(record => record.step <= currentStep);
+            }
+
+            // ステップを進めて履歴に追加
+            currentStep++;
+            inputHistory.push({
+                step: currentStep,
+                action: actionType
+            });
+            
+            // 最大ステップ数の更新（スライダーの幅を広げる）
+            maxStep = currentStep;
+            
+            updateUI();
+        }
+
+        // スライダーが動かされた時の処理 (Time Travel / Micro Rollback)
+        function handleTimeTravel(targetStep) {
+            currentStep = parseInt(targetStep, 10);
+            updateUI();
+        }
+
+        // 過去の履歴から、指定したステップ時点の「状態(位置)」を再計算する
+        // （これが、計算リソースを使って状態を復元する「決定論的シミュレーション」の簡易版です）
+        function calculatePositionAt(targetStep) {
+            let positionX = 0; // 初期位置
+            
+            for (const record of inputHistory) {
+                // 指定したステップを過ぎたら計算終了
+                if (record.step > targetStep) break;
+                
+                if (record.action === 'RIGHT') positionX += STEP_SIZE;
+                if (record.action === 'LEFT')  positionX -= STEP_SIZE;
+            }
+            
+            return positionX;
+        }
+
+        // === 画面描画（View Layer） ===
+        function updateUI() {
+            // 1. 位置の再計算とキャラクターの移動
+            const targetX = calculatePositionAt(currentStep);
+            characterEl.style.transform = `translateX(${targetX}px)`;
+
+            // 2. バッジとスライダーの更新
+            stepBadgeEl.innerText = `現在: ${currentStep} 歩目`;
+            if(currentStep < maxStep) {
+                stepBadgeEl.classList.replace('bg-indigo-100', 'bg-amber-100');
+                stepBadgeEl.classList.replace('text-indigo-700', 'text-amber-700');
+                stepBadgeEl.innerText = `過去改変中: ${currentStep} 歩目`;
+            } else {
+                stepBadgeEl.classList.replace('bg-amber-100', 'bg-indigo-100');
+                stepBadgeEl.classList.replace('text-amber-700', 'text-indigo-700');
+            }
+
+            sliderEl.max = maxStep;
+            sliderEl.value = currentStep;
+            sliderLabelEl.innerText = `現在 (${currentStep}歩目)`;
+
+            // 3. 履歴リストの描画
+            renderHistoryList();
+        }
+
+        // 履歴リストをHTMLとして生成
+        function renderHistoryList() {
+            if (inputHistory.length === 0) {
+                historyListEl.innerHTML = '<li class="text-slate-400 italic text-center py-4">まだ操作の記録はありません</li>';
+                return;
+            }
+
+            historyListEl.innerHTML = '';
+            
+            // 最新のものが上に来るように逆順でループ
+            const reversedHistory = [...inputHistory].reverse();
+            
+            reversedHistory.forEach(record => {
+                const li = document.createElement('li');
+                
+                // 過去に戻っている時、未来の履歴はグレーアウトして「取り消し線」を引く表現
+                const isFuture = record.step > currentStep;
+                
+                li.className = `p-3 rounded-lg flex justify-between items-center transition-all ${
+                    isFuture 
+                        ? 'bg-slate-100 text-slate-400 opacity-60 line-through' 
+                        : 'bg-white border border-slate-200 text-slate-700 shadow-sm'
+                }`;
+
+                const actionText = record.action === 'RIGHT' ? '👉 右へ移動' : '👈 左へ移動';
+                
+                li.innerHTML = `
+                    <span class="font-medium">Step ${record.step}</span>
+                    <span class="${record.action === 'RIGHT' ? 'text-indigo-600' : 'text-emerald-600'} ${isFuture ? 'opacity-50' : ''} font-bold">${actionText}</span>
+                `;
+                
+                historyListEl.appendChild(li);
+            });
+        }
+    </script>
+</body>
+</html>
