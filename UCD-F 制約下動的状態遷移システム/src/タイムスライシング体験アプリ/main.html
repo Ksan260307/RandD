@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>計算の分割処理（タイムスライシング）デモ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .progress-bar {
+            transition: width 0.1s linear;
+        }
+        @keyframes custom-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .animate-custom-spin {
+            animation: custom-spin 1s linear infinite;
+        }
+        /* キャンバスがぼやけないようにする設定 */
+        canvas {
+            image-rendering: pixelated;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen flex items-center justify-center p-4 md:p-8">
+
+    <div class="max-w-5xl w-full bg-white rounded-2xl shadow-xl overflow-hidden">
+        
+        <!-- ヘッダー部分 -->
+        <div class="bg-indigo-600 p-6 md:p-8 text-white text-center">
+            <h1 class="text-2xl md:text-3xl font-bold mb-3 flex items-center justify-center gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                タイムスライシング（計算の分割処理）体験
+            </h1>
+            <p class="text-indigo-100 text-sm md:text-base max-w-3xl mx-auto">
+                「未来の変動予測」のような膨大で重いデータ解析を一度に行うと、画面が一時的に「フリーズ」してしまいます。<br>
+                計算タスクを細かく分け、描画の合間に少しずつ進めることで、画面を滑らかに保つ技術を体験してみましょう。
+            </p>
+        </div>
+
+        <div class="p-6 md:p-8">
+            
+            <!-- フリーズ確認用のアニメーション -->
+            <div class="bg-slate-50 border border-slate-200 p-5 rounded-xl mb-8 flex flex-col items-center">
+                <div class="flex items-center gap-2 mb-3">
+                    <svg class="animate-custom-spin text-indigo-500 w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <p class="font-semibold text-slate-700">画面の滑らかさ確認アニメーション</p>
+                </div>
+                <div class="w-full max-w-2xl h-6 bg-slate-200 rounded-full overflow-hidden relative shadow-inner">
+                    <div id="animBlock" class="absolute top-0 left-0 h-full w-1/4 bg-gradient-to-r from-indigo-400 to-indigo-600 rounded-full shadow-md"></div>
+                </div>
+                <p class="text-xs text-slate-500 mt-3 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                    重い計算中に上のブロックやアイコンの動きが止まったら、画面（メインスレッド）がフリーズしている証拠です。
+                </p>
+            </div>
+
+            <!-- items-start を追加し、各カードが独立した高さを保つように修正 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 items-start">
+                
+                <!-- 一括処理のカード -->
+                <div class="bg-white border-2 border-rose-100 p-5 rounded-xl shadow-sm relative overflow-hidden flex flex-col">
+                    <div class="absolute top-0 left-0 w-full h-1 bg-rose-500"></div>
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="bg-rose-100 text-rose-700 p-1.5 rounded-lg">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+                        </span>
+                        <h2 class="text-xl font-bold text-slate-800">一括処理 <span class="text-rose-500 text-sm font-normal">（従来の方法）</span></h2>
+                    </div>
+                    <p class="text-sm text-slate-600 mb-4 min-h-[40px]">
+                        1500個のデータブロック解析を一度に行います。<br>完了するまで画面が操作不能（フリーズ）になります。
+                    </p>
+                    
+                    <button id="btnSync" class="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 px-4 rounded-lg transition-colors mb-4 flex justify-center items-center gap-2 shadow-sm">
+                        <svg class="animate-spin h-5 w-5 text-white hidden" id="spinnerSync" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        一括処理をスタート
+                    </button>
+                    
+                    <div class="w-full bg-slate-100 rounded-full h-3 mb-2 shadow-inner">
+                        <div id="progSync" class="bg-rose-500 h-3 rounded-full progress-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between items-center text-sm mb-4">
+                        <p id="statusSync" class="text-slate-500 font-medium">待機中</p>
+                        <p id="timeSync" class="text-slate-400 font-mono">0.00s</p>
+                    </div>
+
+                    <!-- 計算タスクの可視化マップ -->
+                    <div class="mt-auto bg-slate-50 p-3 rounded-lg border border-slate-200">
+                        <p class="text-xs font-semibold text-slate-500 mb-2 flex justify-between">
+                            <span>裏側で実行中の解析タスク (1500個)</span>
+                            <span id="counterSync" class="text-rose-600">0 / 1500</span>
+                        </p>
+                        <canvas id="canvasSync" width="500" height="300" class="w-full h-auto bg-white border border-slate-200 rounded"></canvas>
+                        <p class="text-[10px] text-slate-400 mt-2 leading-tight">
+                            ※一括処理では計算中、画面の更新処理も停止するため、ブロックが塗られていく途中経過は見えません。
+                        </p>
+                    </div>
+
+                    <!-- サンプルコード表示 -->
+                    <div class="mt-4 pt-4 border-t border-rose-100">
+                        <button type="button" onclick="document.getElementById('codeSync').classList.toggle('hidden')" class="text-xs font-semibold text-rose-600 hover:text-rose-700 flex items-center gap-1 transition-colors w-full">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                            裏側の仕組み（コード）を見る
+                        </button>
+                        <div id="codeSync" class="hidden mt-3">
+                            <div class="bg-[#1e1e1e] rounded-md p-4 overflow-x-auto shadow-inner border border-slate-800">
+<pre class="text-[11px] leading-relaxed font-mono text-[#d4d4d4]">
+<span class="text-[#6a9955]">// すべての計算を1つのループで一気に実行</span>
+<span class="text-[#569cd6]">for</span> (<span class="text-[#569cd6]">let</span> i = <span class="text-[#b5cea8]">0</span>; i &lt; TOTAL_STEPS; i++) {
+    <span class="text-[#dcdcaa]">doHeavyWork</span>(); <span class="text-[#6a9955]">// 重い処理</span>
+}
+
+<span class="text-[#6a9955]">// ↑ このループが終わるまで画面（メインスレッド）は占有され、</span>
+<span class="text-[#6a9955]">// 進捗バーの更新やアニメーションは一切行われません。</span>
+<span class="text-[#dcdcaa]">updateUI</span>(); <span class="text-[#6a9955]">// 終わってから初めて画面が更新される</span>
+</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分割処理のカード -->
+                <div class="bg-white border-2 border-emerald-100 p-5 rounded-xl shadow-sm relative overflow-hidden flex flex-col">
+                    <div class="absolute top-0 left-0 w-full h-1 bg-emerald-500"></div>
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="bg-emerald-100 text-emerald-700 p-1.5 rounded-lg">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                        </span>
+                        <h2 class="text-xl font-bold text-slate-800">分割処理 <span class="text-emerald-500 text-sm font-normal">（タイムスライシング）</span></h2>
+                    </div>
+                    <p class="text-sm text-slate-600 mb-4 min-h-[40px]">
+                        解析を細かく区切り、描画の合間に少しずつ実行します。<br>アニメーションは止まらず、進捗も目視できます。
+                    </p>
+                    
+                    <button id="btnAsync" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 px-4 rounded-lg transition-colors mb-4 flex justify-center items-center gap-2 shadow-sm">
+                        <svg class="animate-spin h-5 w-5 text-white hidden" id="spinnerAsync" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        分割処理をスタート
+                    </button>
+                    
+                    <div class="w-full bg-slate-100 rounded-full h-3 mb-2 shadow-inner">
+                        <div id="progAsync" class="bg-emerald-500 h-3 rounded-full progress-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between items-center text-sm mb-4">
+                        <p id="statusAsync" class="text-slate-500 font-medium">待機中</p>
+                        <p id="timeAsync" class="text-slate-400 font-mono">0.00s</p>
+                    </div>
+
+                    <!-- 計算タスクの可視化マップ -->
+                    <div class="mt-auto bg-slate-50 p-3 rounded-lg border border-slate-200">
+                        <p class="text-xs font-semibold text-slate-500 mb-2 flex justify-between">
+                            <span>裏側で実行中の解析タスク (1500個)</span>
+                            <span id="counterAsync" class="text-emerald-600">0 / 1500</span>
+                        </p>
+                        <canvas id="canvasAsync" width="500" height="300" class="w-full h-auto bg-white border border-slate-200 rounded"></canvas>
+                        <p class="text-[10px] text-slate-400 mt-2 leading-tight">
+                            黄色く光っている箇所が、まさに今ブラウザの裏側で計算・解析処理を行っているデータブロックです。
+                        </p>
+                    </div>
+
+                    <!-- サンプルコード表示 -->
+                    <div class="mt-4 pt-4 border-t border-emerald-100">
+                        <button type="button" onclick="document.getElementById('codeAsync').classList.toggle('hidden')" class="text-xs font-semibold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 transition-colors w-full">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                            裏側の仕組み（コード）を見る
+                        </button>
+                        <div id="codeAsync" class="hidden mt-3">
+                            <div class="bg-[#1e1e1e] rounded-md p-4 overflow-x-auto shadow-inner border border-slate-800">
+<pre class="text-[11px] leading-relaxed font-mono text-[#d4d4d4]">
+<span class="text-[#569cd6]">function</span> <span class="text-[#dcdcaa]">processChunk</span>() {
+    <span class="text-[#569cd6]">const</span> start = performance.<span class="text-[#dcdcaa]">now</span>();
+    
+    <span class="text-[#6a9955]">// 1回の描画の合間（約12ミリ秒）だけ計算する</span>
+    <span class="text-[#c586c0]">while</span> (step &lt; TOTAL && (performance.<span class="text-[#dcdcaa]">now</span>() - start) &lt; <span class="text-[#b5cea8]">12</span>) {
+        <span class="text-[#dcdcaa]">doHeavyWork</span>();
+        step++;
+    }
+    
+    <span class="text-[#dcdcaa]">updateUI</span>(); <span class="text-[#6a9955]">// UI（進捗バーなど）をここで更新</span>
+
+    <span class="text-[#c586c0]">if</span> (step &lt; TOTAL) {
+        <span class="text-[#6a9955]">// 残りの計算は、次の描画タイミングに回す（画面は滑らか）</span>
+        <span class="text-[#dcdcaa]">requestAnimationFrame</span>(processChunk);
+    }
+}
+<span class="text-[#dcdcaa]">requestAnimationFrame</span>(processChunk); <span class="text-[#6a9955]">// 処理開始</span>
+</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 画面の滑らかさ確認用アニメーション ---
+        const animBlock = document.getElementById('animBlock');
+        let animPos = 0;
+        let animDir = 1;
+        
+        function updateAnimation() {
+            animPos += animDir * 1.5;
+            if (animPos > 75) { animDir = -1; animPos = 75; }
+            if (animPos < 0) { animDir = 1; animPos = 0; }
+            animBlock.style.left = animPos + '%';
+            requestAnimationFrame(updateAnimation);
+        }
+        updateAnimation();
+
+
+        // --- 重い計算のシミュレーション設定 ---
+        const TOTAL_STEPS = 1500; // データブロックの総数 (50列 x 30行 = 1500個)
+        const WORK_PER_STEP = 30000; // 1ブロックあたりの計算量
+
+        // 無意味で重い数学計算を行う関数（1ブロックの解析を表現）
+        function doHeavyWork() {
+            let result = 0;
+            for (let i = 0; i < WORK_PER_STEP; i++) {
+                result += Math.sqrt(i) * Math.sin(i);
+            }
+            return result;
+        }
+
+        // --- キャンバス描画用ロジック ---
+        // 50 x 30 のマス目で 1500 のタスクを視覚化します
+        function drawTaskMap(canvasId, currentStep, isRunning, baseColorHex) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            const cols = 50;
+            const rows = 30;
+            const cellW = canvas.width / cols;
+            const cellH = canvas.height / rows;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            for (let i = 0; i < TOTAL_STEPS; i++) {
+                const x = (i % cols) * cellW;
+                const y = Math.floor(i / cols) * cellH;
+
+                if (i < currentStep) {
+                    // 直近で処理した数ブロックは「計算中」っぽく黄色く光らせる
+                    if (isRunning && i >= currentStep - 8) {
+                        ctx.fillStyle = '#fbbf24'; // amber-400 (計算中のハイライト)
+                    } else {
+                        ctx.fillStyle = baseColorHex; // 完了済みの色
+                    }
+                } else {
+                    ctx.fillStyle = '#f1f5f9'; // slate-100 (未処理の色)
+                }
+
+                // マス目の間に1pxの隙間を作る
+                ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2);
+            }
+        }
+
+        // 初期状態のキャンバスを描画
+        drawTaskMap('canvasSync', 0, false, '#f43f5e');
+        drawTaskMap('canvasAsync', 0, false, '#10b981');
+
+
+        // --- UI状態を更新するヘルパー関数 ---
+        function setUIState(type, isRunning) {
+            const btn = document.getElementById(`btn${type}`);
+            const spinner = document.getElementById(`spinner${type}`);
+            const status = document.getElementById(`status${type}`);
+            const prog = document.getElementById(`prog${type}`);
+            const time = document.getElementById(`time${type}`);
+
+            if (isRunning) {
+                btn.disabled = true;
+                btn.classList.add('opacity-70', 'cursor-not-allowed');
+                spinner.classList.remove('hidden');
+                prog.style.width = '0%';
+                time.textContent = '0.00s';
+                
+                if (type === 'Sync') {
+                    status.textContent = '計算中 (フリーズ発生中!)';
+                    status.classList.replace('text-slate-500', 'text-rose-600');
+                    document.getElementById('counterSync').textContent = `0 / ${TOTAL_STEPS}`;
+                    drawTaskMap('canvasSync', 0, true, '#f43f5e');
+                } else {
+                    status.textContent = '計算中 (滑らかに進行)';
+                    status.classList.replace('text-slate-500', 'text-emerald-600');
+                    document.getElementById('counterAsync').textContent = `0 / ${TOTAL_STEPS}`;
+                    drawTaskMap('canvasAsync', 0, true, '#10b981');
+                }
+            } else {
+                btn.disabled = false;
+                btn.classList.remove('opacity-70', 'cursor-not-allowed');
+                spinner.classList.add('hidden');
+                status.textContent = '完了しました';
+                status.classList.replace('text-rose-600', 'text-slate-500');
+                status.classList.replace('text-emerald-600', 'text-slate-500');
+            }
+        }
+
+
+        // --- 1. 一括処理（同期処理）---
+        document.getElementById('btnSync').addEventListener('click', () => {
+            setUIState('Sync', true);
+
+            // UIが「計算中」に切り替わる描画を待ってから開始する
+            setTimeout(() => {
+                const start = performance.now();
+                let currentStep = 0;
+                
+                // すべての計算を1つのループで一気に実行（画面フリーズ）
+                for (let i = 0; i < TOTAL_STEPS; i++) {
+                    doHeavyWork();
+                    currentStep++;
+                    
+                    // ※ ここで描画命令(drawTaskMap)を出しても、メインスレッドが
+                    // 占有されているため、ブラウザは画面の更新を行えません。
+                }
+                
+                const end = performance.now();
+                
+                // 計算がすべて終わって、ようやく画面に結果が反映されます
+                document.getElementById('progSync').style.width = '100%';
+                document.getElementById('timeSync').textContent = ((end - start) / 1000).toFixed(2) + 's';
+                document.getElementById('counterSync').textContent = `${TOTAL_STEPS} / ${TOTAL_STEPS}`;
+                
+                // キャンバスも一気に100%の状態で描画される
+                drawTaskMap('canvasSync', TOTAL_STEPS, false, '#f43f5e');
+                setUIState('Sync', false);
+            }, 50);
+        });
+
+
+        // --- 2. 分割処理（タイムスライシング）---
+        document.getElementById('btnAsync').addEventListener('click', () => {
+            setUIState('Async', true);
+            const prog = document.getElementById('progAsync');
+            const timeUI = document.getElementById('timeAsync');
+            const counterUI = document.getElementById('counterAsync');
+            
+            const start = performance.now();
+            let currentStep = 0;
+
+            function processChunk() {
+                // 1回の描画フレームの中で、約12ミリ秒だけ計算に時間を使います
+                const chunkStart = performance.now();
+                
+                while (currentStep < TOTAL_STEPS && (performance.now() - chunkStart) < 12) {
+                    doHeavyWork();
+                    currentStep++;
+                }
+
+                // 現在の進捗でUI（プログレスバーとキャンバス）を更新
+                const currentProgress = (currentStep / TOTAL_STEPS) * 100;
+                prog.style.width = currentProgress + '%';
+                timeUI.textContent = ((performance.now() - start) / 1000).toFixed(2) + 's';
+                counterUI.textContent = `${currentStep} / ${TOTAL_STEPS}`;
+                
+                // キャンバスのマス目を進捗に合わせて塗る（黄色いハイライト付き）
+                drawTaskMap('canvasAsync', currentStep, true, '#10b981');
+
+                if (currentStep < TOTAL_STEPS) {
+                    // まだ計算が残っている場合は、次の描画タイミングで続きを行う（画面は滑らか）
+                    requestAnimationFrame(processChunk);
+                } else {
+                    // 全て完了
+                    const end = performance.now();
+                    timeUI.textContent = ((end - start) / 1000).toFixed(2) + 's';
+                    
+                    // 完了状態（ハイライトを消す）で最終描画
+                    drawTaskMap('canvasAsync', TOTAL_STEPS, false, '#10b981');
+                    setUIState('Async', false);
+                }
+            }
+
+            // 最初の分割処理を開始
+            requestAnimationFrame(processChunk);
+        });
+    </script>
+</body>
+</html>
