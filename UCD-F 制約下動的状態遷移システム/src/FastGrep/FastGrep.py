@@ -1,32 +1,40 @@
 import os
 import sys
-import argparse
 import re
 import concurrent.futures
 import fnmatch
 import shutil
+import threading
+import webbrowser
 from pathlib import Path
 
-# 外部ライブラリのフォールバック機構（システムの制約への適応）
+# Webサーバー・API用ライブラリ
+try:
+    from flask import Flask, request, jsonify, render_template_string
+except ImportError:
+    print("エラー: Flaskライブラリがインストールされていません。")
+    print("以下のコマンドを実行してインストールしてください:")
+    print("pip install flask")
+    sys.exit(1)
+
+# 文字コード判定のフォールバック用ライブラリ
 try:
     import chardet
     HAS_CHARDET = True
 except ImportError:
     HAS_CHARDET = False
 
-# ANSIエスケープシーケンス（コンソール色付け用）
-COLOR_GREEN = '\033[92m'
-COLOR_YELLOW = '\033[93m'
-COLOR_RED = '\033[91m'
-COLOR_RESET = '\033[0m'
-
-# 無駄な演算対象を初期段階で枝刈りするための除外ディレクトリ群（ベース）
+# ベースとなる除外ディレクトリ群
 BASE_EXCLUDE_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".idea", ".vscode", "build", "dist"}
 
+app = Flask(__name__)
+
+# ==========================================
+# Core Logic (バックエンドの高速検索/置換処理)
+# ==========================================
+
 def detect_encoding(raw_bytes: bytes) -> str:
-    """
-    バイト列から最適なエンコーディングを推論する。
-    """
+    """バイト列から最適なエンコーディングを推論する"""
     if raw_bytes.startswith(b"\xef\xbb\xbf"):
         return "utf-8-sig"
     if raw_bytes.startswith(b"\xff\xfe") or raw_bytes.startswith(b"\xfe\xff"):
@@ -53,13 +61,13 @@ def detect_encoding(raw_bytes: bytes) -> str:
         except (UnicodeDecodeError, LookupError):
             continue
             
-    return "utf-8" 
+    return "utf-8"
 
-def execute_replace(file_path: Path, pattern: re.Pattern, replace_str: str, encoding: str, make_backup: bool) -> int:
-    """
-    ファイル内の該当パターンを置換文字列で置換し、上書き保存する。
-    """
+def execute_replace_single(file_path_str: str, pattern_str: str, flags: int, replace_str: str, encoding: str, make_backup: bool) -> dict:
+    """単一ファイルに対する置換の実行"""
+    file_path = Path(file_path_str)
     try:
+        pattern = re.compile(pattern_str, flags)
         with open(file_path, "r", encoding=encoding, errors="surrogateescape") as f:
             content = f.read()
             
@@ -72,27 +80,27 @@ def execute_replace(file_path: Path, pattern: re.Pattern, replace_str: str, enco
                 
             with open(file_path, "w", encoding=encoding, errors="surrogateescape") as f:
                 f.write(new_content)
-            return count
+            return {"file": file_path.name, "count": count, "status": "success"}
+        return {"file": file_path.name, "count": 0, "status": "no_match"}
     except Exception as e:
-        print(f"  [エラー] {file_path.name} の置換に失敗: {e}")
-    return 0
+        return {"file": file_path.name, "count": 0, "status": "error", "message": str(e)}
 
-def process_file(file_path: Path, pattern: re.Pattern, base_dir: Path, 
-                 files_with_matches: bool = False, only_matching: bool = False, force_encoding: str = None) -> tuple:
-    """
-    単一ファイル内のパターン検索を実行する。
-    """
+def process_file_worker(file_path_str: str, pattern_str: str, flags: int, base_dir_str: str, 
+                 files_with_matches: bool, only_matching: bool, force_encoding: str) -> dict:
+    """並列ワーカーから呼び出される単一ファイルの検索タスク"""
+    file_path = Path(file_path_str)
+    base_dir = Path(base_dir_str)
+    pattern = re.compile(pattern_str, flags)
+    
     results = []
     encoding = force_encoding if force_encoding else "utf-8"
     try:
         with open(file_path, "rb") as f:
             sample_bytes = f.read(8192)
-            
             if not sample_bytes:
-                return file_path, results, encoding
-                
+                return None
             if b"\x00" in sample_bytes and not (sample_bytes.startswith(b"\xff\xfe") or sample_bytes.startswith(b"\xfe\xff")):
-                 return file_path, results, encoding
+                 return None
 
             if not force_encoding:
                 encoding = detect_encoding(sample_bytes)
@@ -101,332 +109,546 @@ def process_file(file_path: Path, pattern: re.Pattern, base_dir: Path,
             if files_with_matches:
                 for line in f:
                     if pattern.search(line):
-                        rel_path = str(file_path.relative_to(base_dir))
-                        results.append((rel_path, None, None))
+                        results.append({"line_num": None, "text": None})
                         break
             else:
                 for line_num, line in enumerate(f, 1):
                     if only_matching:
                         for match in pattern.finditer(line):
-                            rel_path = str(file_path.relative_to(base_dir))
-                            results.append((rel_path, line_num, match.group(0)))
+                            results.append({"line_num": line_num, "text": match.group(0)})
                     else:
                         if pattern.search(line):
-                            rel_path = str(file_path.relative_to(base_dir))
-                            results.append((rel_path, line_num, line.rstrip()))
-                    
+                            results.append({"line_num": line_num, "text": line.rstrip()})
+                            
     except Exception:
-        pass
+        return None
         
-    return file_path, results, encoding
+    if not results:
+        return None
+        
+    return {
+        "full_path": str(file_path),
+        "rel_path": str(file_path.relative_to(base_dir)).replace("\\", "/"),
+        "encoding": encoding,
+        "matches": results
+    }
 
-def build_dense_file_list(target_dir: Path, include_patterns: list, exclude_patterns: list, exclude_dirs: set) -> list:
-    """
-    指定パスから除外ディレクトリを枝刈りし、密な（有効な）ファイルパスのリストを構築する。
-    """
+def build_file_list(target_dir: Path, include_patterns: list, exclude_patterns: list, exclude_dirs: set) -> list:
+    """探索ツリーの枝刈りを行い、対象ファイルのリストを構築する"""
     file_list = []
     for root, dirs, files in os.walk(target_dir):
         dirs[:] = [d for d in dirs if d not in exclude_dirs and not d.startswith('.')]
-        
         for file in files:
-            if file.startswith('.'):
-                continue
-                
+            if file.startswith('.'): continue
             file_path = Path(root) / file
-            rel_path = file_path.relative_to(target_dir)
-            rel_path_str = str(rel_path).replace("\\", "/")
+            rel_path_str = str(file_path.relative_to(target_dir)).replace("\\", "/")
             
-            if exclude_patterns:
-                if any(fnmatch.fnmatch(rel_path_str, p) or fnmatch.fnmatch(file, p) for p in exclude_patterns):
-                    continue
-            
-            if include_patterns:
-                if not any(fnmatch.fnmatch(rel_path_str, p) or fnmatch.fnmatch(file, p) for p in include_patterns):
-                    continue
-                    
-            file_list.append(file_path)
-            
+            if exclude_patterns and any(fnmatch.fnmatch(rel_path_str, p) or fnmatch.fnmatch(file, p) for p in exclude_patterns):
+                continue
+            if include_patterns and not any(fnmatch.fnmatch(rel_path_str, p) or fnmatch.fnmatch(file, p) for p in include_patterns):
+                continue
+            file_list.append(str(file_path))
     return file_list
 
-def run_search(args, is_interactive=False):
-    """
-    1回分の検索、結果表示、置換、保存のフローを実行するコア関数。
-    エラー発生時は sys.exit せず return して対話ループの継続を担保する。
-    """
-    if getattr(args, 'filename_only', False) and getattr(args, 'replace', None) is not None:
-        print("エラー: --filename-only と --replace は同時に指定できません。")
-        return
-    
-    target_dir = Path(args.target_path).resolve()
-    if not target_dir.is_dir():
-        print(f"エラー: 指定されたパスが存在しないか、ディレクトリではありません: {target_dir}")
-        return
+# ==========================================
+# Web Frontend (HTML/CSS/JS)
+# ==========================================
 
-    pattern_str = args.pattern
-    if getattr(args, 'fixed_strings', False):
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FastGrep Web</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .loader {
+            border-top-color: #4f46e5;
+            -webkit-animation: spinner 1.5s linear infinite;
+            animation: spinner 1.5s linear infinite;
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* スクロールバーのカスタマイズ */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col font-sans text-gray-800">
+    <!-- Header -->
+    <header class="bg-indigo-600 text-white p-4 shadow-md flex justify-between items-center z-10 relative">
+        <div class="flex items-center space-x-2">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            <h1 class="text-xl font-bold tracking-wider">FastGrep Web</h1>
+        </div>
+        <div class="text-sm bg-indigo-700 px-3 py-1 rounded-full border border-indigo-500">Python + Flask Engine</div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- Left Sidebar (Controls) -->
+        <aside class="w-96 bg-white border-r border-gray-200 overflow-y-auto flex flex-col">
+            <div class="p-5 space-y-5">
+                
+                <!-- Search Target -->
+                <section>
+                    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Target</h2>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">ディレクトリパス (必須)</label>
+                            <input type="text" id="target_path" placeholder="C:\\Projects\\MyApp" class="w-full text-sm border-gray-300 border rounded-md px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500 shadow-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">検索文字列 (必須)</label>
+                            <input type="text" id="pattern" placeholder="Search string..." class="w-full text-sm border-gray-300 border rounded-md px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500 shadow-sm">
+                        </div>
+                    </div>
+                </section>
+
+                <hr class="border-gray-200">
+
+                <!-- Search Options -->
+                <section>
+                    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Options</h2>
+                    <div class="space-y-2 text-sm">
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" id="opt_ignore_case" class="rounded text-indigo-600 focus:ring-indigo-500">
+                            <span>大文字小文字を区別しない (i)</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" id="opt_word" class="rounded text-indigo-600 focus:ring-indigo-500">
+                            <span>単語単位で検索 (w)</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" id="opt_fixed" class="rounded text-indigo-600 focus:ring-indigo-500">
+                            <span>リテラル検索 (正規表現無効) (F)</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" id="opt_filename_only" class="rounded text-indigo-600 focus:ring-indigo-500">
+                            <span>ファイル名のみ検索</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" id="opt_files_with_matches" class="rounded text-indigo-600 focus:ring-indigo-500">
+                            <span>マッチしたファイル名のみ出力 (l)</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" id="opt_only_matching" class="rounded text-indigo-600 focus:ring-indigo-500">
+                            <span>マッチ部分のみ抽出 (o)</span>
+                        </label>
+                    </div>
+                </section>
+
+                <hr class="border-gray-200">
+
+                <!-- Filters -->
+                <section>
+                    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Filters</h2>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">含めるファイル (*.py, src/*)</label>
+                            <input type="text" id="include" placeholder="空なら全て" class="w-full text-sm border-gray-300 border rounded-md px-3 py-2">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">除外するファイル (*.test.js)</label>
+                            <input type="text" id="exclude" placeholder="" class="w-full text-sm border-gray-300 border rounded-md px-3 py-2">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">追加除外ディレクトリ (logs, tmp)</label>
+                            <input type="text" id="exclude_dir" placeholder="" class="w-full text-sm border-gray-300 border rounded-md px-3 py-2">
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+
+            <!-- Action Buttons (Sticky Bottom) -->
+            <div class="p-4 bg-gray-50 border-t border-gray-200 mt-auto">
+                <button id="btn_search" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded shadow transition-colors flex justify-center items-center">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    検索を実行
+                </button>
+            </div>
+        </aside>
+
+        <!-- Right Content (Results & Replace) -->
+        <main class="flex-1 flex flex-col bg-gray-100 overflow-hidden relative">
+            
+            <!-- Replace Action Bar (Hidden by default) -->
+            <div id="replace_bar" class="bg-white border-b border-gray-200 p-4 shadow-sm hidden items-end space-x-4">
+                <div class="flex-1">
+                    <label class="block text-xs font-bold text-red-600 mb-1 uppercase tracking-wider">Replace String (置換文字列)</label>
+                    <input type="text" id="replace_str" placeholder="New string..." class="w-full text-sm border-gray-300 border rounded-md px-3 py-2 focus:ring-red-500 focus:border-red-500">
+                </div>
+                <div class="pb-2">
+                    <label class="flex items-center space-x-2 cursor-pointer text-sm font-medium">
+                        <input type="checkbox" id="opt_backup" checked class="rounded text-red-600 focus:ring-red-500">
+                        <span>実行前に.bakを作成</span>
+                    </label>
+                </div>
+                <button id="btn_replace" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded shadow transition-colors h-10">
+                    選択したファイルを置換
+                </button>
+            </div>
+
+            <!-- Status & Stats -->
+            <div class="px-6 py-3 bg-gray-50 border-b border-gray-200 flex justify-between items-center text-sm">
+                <div id="status_text" class="text-gray-600 font-medium">準備完了 - 検索パスと文字列を入力してください</div>
+                <div id="stats_text" class="text-indigo-600 font-bold hidden"></div>
+            </div>
+
+            <!-- Loading Overlay -->
+            <div id="loading_overlay" class="absolute inset-0 bg-white/70 backdrop-blur-sm z-20 flex flex-col justify-center items-center hidden">
+                <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mb-4"></div>
+                <p class="text-gray-600 font-semibold text-lg animate-pulse" id="loading_message">検索中...</p>
+            </div>
+
+            <!-- Results Area -->
+            <div id="results_area" class="flex-1 overflow-y-auto p-6">
+                <!-- Search results will be injected here -->
+                <div class="h-full flex flex-col items-center justify-center text-gray-400 space-y-4 opacity-50">
+                    <svg class="w-20 h-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                    <p class="text-lg">No results yet.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        let currentResults = [];
+
+        // DOM Elements
+        const el = {
+            targetPath: document.getElementById('target_path'),
+            pattern: document.getElementById('pattern'),
+            replaceStr: document.getElementById('replace_str'),
+            btnSearch: document.getElementById('btn_search'),
+            btnReplace: document.getElementById('btn_replace'),
+            resultsArea: document.getElementById('results_area'),
+            loadingOverlay: document.getElementById('loading_overlay'),
+            loadingMessage: document.getElementById('loading_message'),
+            statusText: document.getElementById('status_text'),
+            statsText: document.getElementById('stats_text'),
+            replaceBar: document.getElementById('replace_bar')
+        };
+
+        // Utility: HTML Escape
+        function escapeHTML(str) {
+            if (!str) return "";
+            return str.replace(/[&<>'"]/g, tag => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+            }[tag] || tag));
+        }
+
+        // Search Action
+        el.btnSearch.addEventListener('click', async () => {
+            const targetPath = el.targetPath.value.trim();
+            const pattern = el.pattern.value;
+
+            if (!targetPath || (!pattern && !document.getElementById('opt_filename_only').checked)) {
+                alert("ディレクトリパスと検索文字列を入力してください。");
+                return;
+            }
+
+            const payload = {
+                target_path: targetPath,
+                pattern: pattern,
+                ignore_case: document.getElementById('opt_ignore_case').checked,
+                word: document.getElementById('opt_word').checked,
+                fixed_strings: document.getElementById('opt_fixed').checked,
+                filename_only: document.getElementById('opt_filename_only').checked,
+                files_with_matches: document.getElementById('opt_files_with_matches').checked,
+                only_matching: document.getElementById('opt_only_matching').checked,
+                include: document.getElementById('include').value,
+                exclude: document.getElementById('exclude').value,
+                exclude_dir: document.getElementById('exclude_dir').value
+            };
+
+            el.loadingMessage.innerText = "検索・解析中...";
+            el.loadingOverlay.classList.remove('hidden');
+            el.resultsArea.innerHTML = '';
+            el.replaceBar.classList.add('hidden');
+            el.statsText.classList.add('hidden');
+            currentResults = [];
+
+            try {
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || "サーバーエラーが発生しました");
+                }
+
+                currentResults = data.results;
+                renderResults(data);
+                
+                // Show replace bar if we have valid textual matches (not filename only)
+                if (currentResults.length > 0 && !payload.filename_only && !payload.files_with_matches && !payload.only_matching) {
+                    el.replaceBar.classList.remove('hidden');
+                }
+
+            } catch (err) {
+                el.statusText.innerHTML = `<span class="text-red-600 font-bold">エラー: ${escapeHTML(err.message)}</span>`;
+            } finally {
+                el.loadingOverlay.classList.add('hidden');
+            }
+        });
+
+        // Replace Action
+        el.btnReplace.addEventListener('click', async () => {
+            const replaceStr = el.replaceStr.value;
+            const makeBackup = document.getElementById('opt_backup').checked;
+            
+            // Collect checked files
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+            const filesToReplace = Array.from(checkboxes).map(cb => {
+                const index = parseInt(cb.dataset.index);
+                return currentResults[index];
+            });
+
+            if (filesToReplace.length === 0) {
+                alert("置換対象のファイルが選択されていません。");
+                return;
+            }
+
+            if (!confirm(`${filesToReplace.length} 個のファイルに対して置換を実行します。よろしいですか？`)) {
+                return;
+            }
+
+            const payload = {
+                pattern: el.pattern.value,
+                replace: replaceStr,
+                ignore_case: document.getElementById('opt_ignore_case').checked,
+                word: document.getElementById('opt_word').checked,
+                fixed_strings: document.getElementById('opt_fixed').checked,
+                make_backup: makeBackup,
+                files: filesToReplace.map(f => ({ full_path: f.full_path, encoding: f.encoding }))
+            };
+
+            el.loadingMessage.innerText = "置換を実行中...";
+            el.loadingOverlay.classList.remove('hidden');
+
+            try {
+                const response = await fetch('/api/replace', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || "置換に失敗しました");
+
+                let totalReplaced = 0;
+                let errorCount = 0;
+                data.results.forEach(r => {
+                    if (r.status === 'success') totalReplaced += r.count;
+                    if (r.status === 'error') errorCount++;
+                });
+
+                alert(`置換完了: ${totalReplaced} 箇所\\n(エラー: ${errorCount} 件)`);
+                el.replaceStr.value = '';
+                // 再検索して画面を更新
+                el.btnSearch.click();
+
+            } catch (err) {
+                alert(`エラー: ${err.message}`);
+            } finally {
+                el.loadingOverlay.classList.add('hidden');
+            }
+        });
+
+        // Render Results HTML
+        function renderResults(data) {
+            el.statusText.innerHTML = `スキャン完了: <span class="font-bold text-gray-800">${data.total_files}</span> files scanned.`;
+            
+            if (data.results.length === 0) {
+                el.resultsArea.innerHTML = `
+                    <div class="h-full flex flex-col items-center justify-center text-gray-400 space-y-4">
+                        <svg class="w-16 h-16 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <p class="text-lg font-medium">一致する文字列は見つかりませんでした。</p>
+                    </div>`;
+                return;
+            }
+
+            let totalMatches = 0;
+            let html = '<div class="space-y-4 pb-10">';
+
+            data.results.forEach((fileRes, index) => {
+                totalMatches += fileRes.matches ? fileRes.matches.length : 1;
+                
+                html += `
+                <div class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+                    <div class="bg-gray-50 border-b border-gray-200 px-4 py-2 flex items-center justify-between sticky top-0">
+                        <div class="flex items-center space-x-3 truncate">
+                            <input type="checkbox" class="file-checkbox rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer" checked data-index="${index}">
+                            <svg class="w-5 h-5 text-gray-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"></path></svg>
+                            <span class="font-semibold text-indigo-800 text-sm truncate" title="${escapeHTML(fileRes.rel_path)}">${escapeHTML(fileRes.rel_path)}</span>
+                        </div>
+                        <span class="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded border border-gray-300">${escapeHTML(fileRes.encoding)}</span>
+                    </div>
+                    <div class="p-0 bg-gray-900 text-gray-100 font-mono text-xs overflow-x-auto">
+                `;
+
+                if (fileRes.matches && fileRes.matches.length > 0) {
+                    html += `<table class="w-full whitespace-pre"><tbody>`;
+                    fileRes.matches.forEach(m => {
+                        if (m.line_num !== null && m.text !== null) {
+                            html += `
+                            <tr class="hover:bg-gray-800 transition-colors">
+                                <td class="px-3 py-1 text-right text-gray-500 border-r border-gray-700 w-12 select-none">${m.line_num}</td>
+                                <td class="px-3 py-1 text-green-400 break-all">${escapeHTML(m.text)}</td>
+                            </tr>`;
+                        } else {
+                            html += `<tr><td class="px-4 py-2 text-green-400 italic">Match found.</td></tr>`;
+                        }
+                    });
+                    html += `</tbody></table>`;
+                }
+                
+                html += `</div></div>`;
+            });
+
+            html += '</div>';
+            el.resultsArea.innerHTML = html;
+
+            el.statsText.innerText = `${data.results.length} files / ${totalMatches} hits`;
+            el.statsText.classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
+"""
+
+# ==========================================
+# Flask API Endpoints
+# ==========================================
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/api/search', methods=['POST'])
+def api_search():
+    data = request.json
+    target_path = data.get('target_path', '').strip()
+    pattern_str = data.get('pattern', '')
+    
+    ignore_case = data.get('ignore_case', False)
+    word = data.get('word', False)
+    fixed_strings = data.get('fixed_strings', False)
+    filename_only = data.get('filename_only', False)
+    files_with_matches = data.get('files_with_matches', False)
+    only_matching = data.get('only_matching', False)
+    
+    target_dir = Path(target_path).resolve()
+    if not target_dir.is_dir():
+        return jsonify({"error": "指定されたパスが存在しないか、ディレクトリではありません"}), 400
+
+    if filename_only and only_matching:
+        return jsonify({"error": "ファイル名のみ検索とマッチ部分抽出は同時に指定できません"}), 400
+
+    if fixed_strings:
         pattern_str = re.escape(pattern_str)
-    if getattr(args, 'word', False):
+    if word:
         pattern_str = rf"\b{pattern_str}\b"
 
-    flags = re.IGNORECASE if getattr(args, 'ignore_case', False) else 0
+    flags = re.IGNORECASE if ignore_case else 0
+    
     try:
         compiled_pattern = re.compile(pattern_str, flags)
     except re.error as e:
-        print(f"正規表現エラー: {e}")
-        return
+        return jsonify({"error": f"正規表現エラー: {e}"}), 400
 
-    include_patterns = [p.strip() for p in args.include.split(",")] if getattr(args, 'include', None) else []
-    exclude_patterns = [p.strip() for p in args.exclude.split(",")] if getattr(args, 'exclude', None) else []
+    include_patterns = [p.strip() for p in data.get('include', '').split(",")] if data.get('include') else []
+    exclude_patterns = [p.strip() for p in data.get('exclude', '').split(",")] if data.get('exclude') else []
     
     active_exclude_dirs = set(BASE_EXCLUDE_DIRS)
-    if getattr(args, 'exclude_dir', None):
-        custom_dirs = {d.strip() for d in args.exclude_dir.split(",")}
-        active_exclude_dirs.update(custom_dirs)
+    if data.get('exclude_dir'):
+        active_exclude_dirs.update({d.strip() for d in data.get('exclude_dir').split(",")})
 
-    print(f"\n検索開始: '{args.pattern}' (対象: {target_dir})")
-    if getattr(args, 'fixed_strings', False): print("  - リテラル(完全一致)検索: 有効")
-    if getattr(args, 'word', False): print("  - 単語単位検索: 有効")
-    if getattr(args, 'filename_only', False): print("  - ファイル名のみ検索: 有効")
-    if getattr(args, 'files_with_matches', False): print("  - マッチしたファイル名のみ出力: 有効")
-    if getattr(args, 'only_matching', False): print("  - マッチ部分のみ抽出: 有効")
-    if getattr(args, 'replace', None) is not None: print(f"  - 置換対象: 有効 ('{args.replace}')")
-    if getattr(args, 'encoding', None): print(f"  - 強制エンコーディング: {args.encoding}")
-    if include_patterns: print(f"  - 含めるファイル: {', '.join(include_patterns)}")
-    if exclude_patterns: print(f"  - 除外するファイル: {', '.join(exclude_patterns)}")
-    if getattr(args, 'exclude_dir', None): print(f"  - 追加除外ディレクトリ: {args.exclude_dir}")
+    files = build_file_list(target_dir, include_patterns, exclude_patterns, active_exclude_dirs)
     
-    files = build_dense_file_list(target_dir, include_patterns, exclude_patterns, active_exclude_dirs)
-    total_files = len(files)
-    print(f"対象ファイル数: {total_files}")
-
-    raw_output_lines = [] 
-    matched_files_info = [] 
-    matched_files_count = 0 
+    results = []
     
-    print("\n--- 検索結果 ---")
-
-    if getattr(args, 'filename_only', False):
-        for f in files:
-            rel_path = f.relative_to(target_dir)
-            rel_path_str = str(rel_path).replace("\\", "/")
-            if compiled_pattern.search(rel_path_str):
-                matched_files_count += 1
-                colored_path = compiled_pattern.sub(lambda m: f"{COLOR_RED}{m.group(0)}{COLOR_RESET}", str(rel_path))
-                print(colored_path)
-                raw_output_lines.append(str(rel_path))
+    if filename_only:
+        for f_path_str in files:
+            rel_path = str(Path(f_path_str).relative_to(target_dir)).replace("\\", "/")
+            if compiled_pattern.search(rel_path):
+                results.append({
+                    "full_path": f_path_str,
+                    "rel_path": rel_path,
+                    "encoding": "N/A",
+                    "matches": []
+                })
     else:
         workers = os.cpu_count() or 4
-        if workers > 1 and total_files > 50:
+        if workers > 1 and len(files) > 50:
             with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
                 futures = {
                     executor.submit(
-                        process_file, f, compiled_pattern, target_dir, 
-                        getattr(args, 'files_with_matches', False), 
-                        getattr(args, 'only_matching', False), 
-                        getattr(args, 'encoding', None)
+                        process_file_worker, f, pattern_str, flags, str(target_dir), 
+                        files_with_matches, only_matching, None
                     ): f for f in files
                 }
                 for future in concurrent.futures.as_completed(futures):
-                    f_path, res_tuples, enc = future.result()
-                    if res_tuples:
-                        matched_files_info.append((f_path, enc))
-                        matched_files_count += 1
-                        for res in res_tuples:
-                            rel_path, line_num, line_text = res
-                            if getattr(args, 'files_with_matches', False):
-                                print(f"{COLOR_GREEN}{rel_path}{COLOR_RESET}")
-                                raw_output_lines.append(rel_path)
-                            else:
-                                if getattr(args, 'only_matching', False):
-                                    print(f"{COLOR_GREEN}{rel_path}{COLOR_RESET}({COLOR_YELLOW}{line_num}{COLOR_RESET}): {COLOR_RED}{line_text}{COLOR_RESET}")
-                                    raw_output_lines.append(f"{rel_path}({line_num}): {line_text}")
-                                else:
-                                    colored_line = compiled_pattern.sub(lambda m: f"{COLOR_RED}{m.group(0)}{COLOR_RESET}", line_text)
-                                    print(f"{COLOR_GREEN}{rel_path}{COLOR_RESET}({COLOR_YELLOW}{line_num}{COLOR_RESET}): {colored_line}")
-                                    raw_output_lines.append(f"{rel_path}({line_num}): {line_text}")
+                    res = future.result()
+                    if res: results.append(res)
         else:
             for f in files:
-                f_path, res_tuples, enc = process_file(
-                    f, compiled_pattern, target_dir, 
-                    getattr(args, 'files_with_matches', False), 
-                    getattr(args, 'only_matching', False), 
-                    getattr(args, 'encoding', None)
-                )
-                if res_tuples:
-                    matched_files_info.append((f_path, enc))
-                    matched_files_count += 1
-                    for res in res_tuples:
-                        rel_path, line_num, line_text = res
-                        if getattr(args, 'files_with_matches', False):
-                            print(f"{COLOR_GREEN}{rel_path}{COLOR_RESET}")
-                            raw_output_lines.append(rel_path)
-                        else:
-                            if getattr(args, 'only_matching', False):
-                                print(f"{COLOR_GREEN}{rel_path}{COLOR_RESET}({COLOR_YELLOW}{line_num}{COLOR_RESET}): {COLOR_RED}{line_text}{COLOR_RESET}")
-                                raw_output_lines.append(f"{rel_path}({line_num}): {line_text}")
-                            else:
-                                colored_line = compiled_pattern.sub(lambda m: f"{COLOR_RED}{m.group(0)}{COLOR_RESET}", line_text)
-                                print(f"{COLOR_GREEN}{rel_path}{COLOR_RESET}({COLOR_YELLOW}{line_num}{COLOR_RESET}): {colored_line}")
-                                raw_output_lines.append(f"{rel_path}({line_num}): {line_text}")
+                res = process_file_worker(f, pattern_str, flags, str(target_dir), files_with_matches, only_matching, None)
+                if res: results.append(res)
 
-    if not raw_output_lines:
-        print("一致する文字列は見つかりませんでした。")
-    else:
-        print(f"\n[集計] {matched_files_count} 個のファイルで合計 {len(raw_output_lines)} 件マッチしました。")
+    results.sort(key=lambda x: x["rel_path"])
 
-    # 置換機能の対話式実行
-    if getattr(args, 'replace', None) is not None and matched_files_info:
-        print("\n=== 置換の実行 ===")
-        print(f"置換: '{args.pattern}' -> '{args.replace}'")
-        if not getattr(args, 'no_backup', False):
-            print("  ※実行前に元のファイルのバックアップ(.bak)を作成します。")
-            
-        matched_files_info.sort(key=lambda x: x[0])
-        for i, (f_path, enc) in enumerate(matched_files_info, 1):
-            rel_path = f_path.relative_to(target_dir)
-            print(f"  [{i}] {rel_path}")
-            
-        print("\n置換するファイルを選択してください。")
-        print("  - 'all' : すべて置換")
-        print("  - '1,3' : 番号で指定 (カンマ区切り)")
-        print("  - 'n'   : 置換しない (キャンセル)")
-        
-        choice = input("入力 (all / 番号 / n): ").strip().lower()
-        
-        target_indices = []
-        if choice == 'all':
-            target_indices = list(range(len(matched_files_info)))
-        elif choice == 'n' or choice == '':
-            print("置換をキャンセルしました。")
-        else:
-            try:
-                indices = [int(x.strip()) - 1 for x in choice.split(",") if x.strip().isdigit()]
-                target_indices = [i for i in indices if 0 <= i < len(matched_files_info)]
-            except ValueError:
-                print("無効な入力です。置換をキャンセルしました。")
-                
-        if target_indices:
-            print("\n置換を実行中...")
-            total_replaced = 0
-            make_backup = not getattr(args, 'no_backup', False)
-            for i in target_indices:
-                f_path, enc = matched_files_info[i]
-                count = execute_replace(f_path, compiled_pattern, args.replace, enc, make_backup)
-                rel_path = f_path.relative_to(target_dir)
-                if count > 0:
-                    print(f"  - {rel_path}: {count} 箇所置換完了")
-                    total_replaced += count
-            print(f"完了: 合計 {total_replaced} 箇所を置換しました。")
+    return jsonify({
+        "total_files": len(files),
+        "results": results
+    })
 
-    # ファイルへの永続化 (任意化)
-    if raw_output_lines:
-        should_save = False
-        if is_interactive:
-            save_ans = input("\n検索結果をファイルに保存しますか？ (y/N): ").strip().lower()
-            if save_ans == 'y':
-                should_save = True
-        elif getattr(args, 'save', False):
-            should_save = True
-
-        if should_save:
-            raw_output_lines.sort()
-            safe_pattern = re.sub(r'[\\/*?:"<>|]', "_", args.pattern)[:30]
-            output_filename = f"GREP_{safe_pattern}.txt"
-            
-            try:
-                with open(output_filename, "w", encoding="utf-8") as out_f:
-                    out_f.write(f"検索文字列: {args.pattern}\n")
-                    out_f.write(f"対象ディレクトリ: {target_dir}\n")
-                    out_f.write(f"検索件数: {matched_files_count} ファイル / {len(raw_output_lines)} 箇所\n")
-                    out_f.write("-" * 40 + "\n")
-                    for res in raw_output_lines:
-                        out_f.write(res + "\n")
-                print(f"検索結果をファイルに保存しました: {output_filename}")
-            except IOError as e:
-                 print(f"検索結果ファイルの保存に失敗しました: {e}")
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="超高速GREPツール (fastgrep)",
-        epilog="★ 引数なしで実行すると対話モードで起動します ★"
-    )
-    parser.add_argument("pattern", nargs="?", help="検索文字列")
-    parser.add_argument("target_path", nargs="?", help="検索対象のディレクトリパス")
-    parser.add_argument("-i", "--ignore-case", action="store_true", help="大文字小文字を区別しない")
-    parser.add_argument("-w", "--word", action="store_true", help="単語単位で検索する")
-    parser.add_argument("-F", "--fixed-strings", action="store_true", help="正規表現を使わずリテラル検索する")
-    parser.add_argument("-l", "--files-with-matches", action="store_true", help="マッチしたファイル名のみを出力する")
-    parser.add_argument("-o", "--only-matching", action="store_true", help="マッチした部分文字列のみを出力する")
-    parser.add_argument("--filename-only", action="store_true", help="ファイル名のみを検索対象にする")
-    parser.add_argument("--replace", help="マッチした文字列を指定した文字列で置換する")
-    parser.add_argument("--encoding", help="ファイルのエンコーディングを強制指定する (例: utf-8, cp932)")
-    parser.add_argument("--include", help="含めるファイルパターン (例: *.py,src/*)")
-    parser.add_argument("--exclude", help="除外するファイルパターン (例: *.test.js,out/*)")
-    parser.add_argument("--exclude-dir", help="除外するディレクトリを追加 (カンマ区切り, 例: logs,tmp,vendor)")
-    parser.add_argument("--save", action="store_true", help="検索結果をファイルに保存する")
-    parser.add_argument("--no-backup", action="store_true", help="置換時にバックアップファイル(.bak)を作成しない")
+@app.route('/api/replace', methods=['POST'])
+def api_replace():
+    data = request.json
+    pattern_str = data.get('pattern', '')
+    replace_str = data.get('replace', '')
+    files = data.get('files', [])
     
-    if os.name == 'nt':
-        os.system('color')
-    
-    args = parser.parse_args()
+    ignore_case = data.get('ignore_case', False)
+    word = data.get('word', False)
+    fixed_strings = data.get('fixed_strings', False)
+    make_backup = data.get('make_backup', True)
 
-    # --- 対話モードの処理 (ループ待機化) ---
-    if len(sys.argv) == 1:
-        print("=== FastGrep 対話モード ===")
-        print("※ 各プロンプトで Ctrl+C を押すとプログラムを終了します。")
-        last_path = ""
-        
-        while True:
-            try:
-                print("\n" + "="*50)
-                
-                # 1. パスの入力 (前回のパスがあればデフォルト化)
-                prompt = f"1. 検索対象のディレクトリパスを入力 [{last_path}]: " if last_path else "1. 検索対象のディレクトリパスを入力: "
-                raw_path = input(prompt).strip(' "\'')
-                
-                if not raw_path and last_path:
-                    raw_path = last_path
-                elif not raw_path:
-                    print("エラー: ディレクトリパスが入力されませんでした。")
-                    continue
-                    
-                args.target_path = raw_path
-                last_path = raw_path
-                
-                # 2. 検索文字列の入力
-                raw_pattern = input("2. 検索文字列を入力: ")
-                if not raw_pattern:
-                    print("エラー: 検索文字列が入力されませんでした。")
-                    continue
-                args.pattern = raw_pattern
-                
-                # 3. アクションの確認
-                action = input("3. アクションを選択 (Enter:通常検索 / r:置換 / o:マッチ部分のみ抽出): ").strip().lower()
-                args.replace = None
-                args.only_matching = False
-                if action == 'r':
-                    args.replace = input("   置換後の文字列を入力してください: ")
-                elif action == 'o':
-                    args.only_matching = True
-                    
-                # 検索実行
-                run_search(args, is_interactive=True)
-                
-            except (KeyboardInterrupt, EOFError):
-                print("\n\nプログラムを終了します。")
-                sys.exit(0)
-    else:
-        # --- コマンドラインからの単発実行処理 ---
-        if not args.pattern or not args.target_path:
-            parser.print_help(sys.stderr)
-            sys.exit(1)
-            
-        try:
-            run_search(args, is_interactive=False)
-        except KeyboardInterrupt:
-            print("\n\n処理が中断されました。")
-            sys.exit(1)
+    if fixed_strings:
+        pattern_str = re.escape(pattern_str)
+    if word:
+        pattern_str = rf"\b{pattern_str}\b"
+
+    flags = re.IGNORECASE if ignore_case else 0
+    
+    results = []
+    for f_info in files:
+        res = execute_replace_single(f_info['full_path'], pattern_str, flags, replace_str, f_info['encoding'], make_backup)
+        results.append(res)
+
+    return jsonify({"results": results})
+
+
+def open_browser():
+    webbrowser.open_new('http://127.0.0.1:5000/')
 
 if __name__ == "__main__":
-    main()
+    print("🚀 FastGrep Web Server を起動しています...")
+    print("🌐 ブラウザが自動的に開きます (http://127.0.0.1:5000/)")
+    # サーバー起動から少し遅延させてブラウザを開く
+    threading.Timer(1.25, open_browser).start()
+    app.run(host='127.0.0.1', port=5000, debug=False)
