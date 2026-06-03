@@ -970,7 +970,7 @@ if __name__ == '__main__':
         from waitress import serve
         print("✅ 本番環境用サーバー (Waitress) で稼働中 - http://127.0.0.1:8000")
         print("   ※ 終了するには Ctrl+C を押してください")
-        print("   ※ テストを実行する場合は 'python パスワードマネージャー.py test' を実行してください")
+        print("   ※ テストを実行する場合は 'python password_manager.py test' を実行してください")
         serve(app, host='127.0.0.1', port=8000)
     except ImportError:
         print("⚠️ 警告: Waitress がインストールされていません。開発用サーバーで起動します。")
