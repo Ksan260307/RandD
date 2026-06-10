@@ -51,7 +51,10 @@ class ScraperSystem:
         self.extract_options = {
             'title': True,
             'description': False,
+            'keywords': False,
             'h1': False,
+            'h2': False,
+            'body_text': True,  # 本文抽出
             'links': True,
             'images': False
         }
@@ -168,9 +171,28 @@ class ScraperSystem:
                     match = re.search(r'<meta[^>]*name=[\'"]?description[\'"]?[^>]*content=[\'"]?([^\'">]+)[\'"]?', html, re.IGNORECASE)
                     extracted['description'] = match.group(1).strip() if match else "説明なし"
 
+                if self.extract_options.get('keywords'):
+                    match = re.search(r'<meta[^>]*name=[\'"]?keywords[\'"]?[^>]*content=[\'"]?([^\'">]+)[\'"]?', html, re.IGNORECASE)
+                    extracted['keywords'] = match.group(1).strip() if match else ""
+
                 if self.extract_options.get('h1'):
                     match = re.search(r'<h1[^>]*>(.*?)</h1>', html, re.IGNORECASE | re.DOTALL)
                     extracted['h1'] = re.sub(r'<[^>]+>', '', match.group(1)).strip() if match else "H1なし"
+
+                if self.extract_options.get('h2'):
+                    found_h2 = re.findall(r'<h2[^>]*>(.*?)</h2>', html, re.IGNORECASE | re.DOTALL)
+                    extracted['h2'] = [re.sub(r'<[^>]+>', '', h).strip() for h in found_h2 if h.strip()][:3]
+
+                if self.extract_options.get('body_text'):
+                    # script/styleなど表示に不要なタグを中身ごと除去
+                    text = re.sub(r'<(script|style)[^>]*>.*?</\1>', ' ', html, flags=re.IGNORECASE | re.DOTALL)
+                    # 残りのHTMLタグ自体を除去し、区切りを改行にする
+                    text = re.sub(r'<[^>]+>', '\n', text)
+                    # 各行の不要な空白を削除し、空行を詰める
+                    lines = [line.strip() for line in text.split('\n') if line.strip()]
+                    text = '\n'.join(lines)
+                    # UIクラッシュを防ぐ安全装置（約1万文字上限）
+                    extracted['body_text'] = text[:10000] + ('...' if len(text) > 10000 else '')
 
                 if self.extract_options.get('links') and status in (STATE_DONE, STATE_PROMOTED):
                     found_links = re.findall(r'href=[\'"]?(https?://[^\'" >]+)', html)
@@ -200,6 +222,23 @@ HTML_CONTENT = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>高効率ウェブスクレイパー</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* スクロールバーのカスタマイズ */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 font-sans">
     <div class="max-w-6xl mx-auto p-4 sm:p-6">
@@ -232,21 +271,30 @@ HTML_CONTENT = """
                 <!-- 抽出オプション設定 -->
                 <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
                     <h2 class="font-bold mb-3 text-slate-700">抽出オプション</h2>
-                    <div class="space-y-2 text-sm text-slate-600">
+                    <div class="grid grid-cols-2 gap-2 text-sm text-slate-600">
                         <label class="flex items-center gap-2 cursor-pointer hover:text-indigo-600">
-                            <input type="checkbox" id="chk-title" checked onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> タイトル (&lt;title&gt;)
+                            <input type="checkbox" id="chk-title" checked onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> タイトル
                         </label>
                         <label class="flex items-center gap-2 cursor-pointer hover:text-indigo-600">
-                            <input type="checkbox" id="chk-desc" onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> 説明文 (meta description)
+                            <input type="checkbox" id="chk-desc" onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> 説明文
                         </label>
                         <label class="flex items-center gap-2 cursor-pointer hover:text-indigo-600">
-                            <input type="checkbox" id="chk-h1" onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> メイン見出し (&lt;h1&gt;)
+                            <input type="checkbox" id="chk-keywords" onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> キーワード
                         </label>
                         <label class="flex items-center gap-2 cursor-pointer hover:text-indigo-600">
-                            <input type="checkbox" id="chk-links" checked onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> 内部リンク (Top 5)
+                            <input type="checkbox" id="chk-h1" onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> 👑 H1
                         </label>
                         <label class="flex items-center gap-2 cursor-pointer hover:text-indigo-600">
-                            <input type="checkbox" id="chk-images" onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> 画像URL (Top 5)
+                            <input type="checkbox" id="chk-h2" onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> 📌 H2(Top 3)
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer hover:text-indigo-600">
+                            <input type="checkbox" id="chk-body" checked onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> 本文(全文)
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer hover:text-indigo-600">
+                            <input type="checkbox" id="chk-links" checked onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> リンク(Top 5)
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer hover:text-indigo-600">
+                            <input type="checkbox" id="chk-images" onchange="updateConfig()" class="w-4 h-4 text-indigo-600 rounded"> 画像(Top 5)
                         </label>
                     </div>
                 </div>
@@ -262,12 +310,12 @@ HTML_CONTENT = """
             <!-- 右カラム：タスク結果 ＆ ログ -->
             <div class="lg:col-span-2 space-y-4 flex flex-col">
                 <!-- タスクカード一覧 -->
-                <div class="bg-slate-50 p-5 rounded-xl shadow-inner border border-slate-200 flex-1 h-[600px] overflow-y-auto" id="tasks-container">
-                    <div id="tasks" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+                <div class="bg-slate-50 p-5 rounded-xl shadow-inner border border-slate-200 flex-1 h-[600px] overflow-y-auto custom-scrollbar" id="tasks-container">
+                    <div id="tasks" class="grid grid-cols-1 gap-4"></div>
                 </div>
 
                 <!-- システムコンソール -->
-                <div class="bg-black text-green-400 p-4 rounded-xl font-mono text-xs h-40 overflow-y-auto shadow-inner" id="logs">
+                <div class="bg-black text-green-400 p-4 rounded-xl font-mono text-xs h-40 overflow-y-auto custom-scrollbar shadow-inner" id="logs">
                     システム起動...
                 </div>
             </div>
@@ -293,7 +341,10 @@ HTML_CONTENT = """
             const config = {
                 title: document.getElementById('chk-title').checked,
                 description: document.getElementById('chk-desc').checked,
+                keywords: document.getElementById('chk-keywords').checked,
                 h1: document.getElementById('chk-h1').checked,
+                h2: document.getElementById('chk-h2').checked,
+                body_text: document.getElementById('chk-body').checked,
                 links: document.getElementById('chk-links').checked,
                 images: document.getElementById('chk-images').checked
             };
@@ -324,52 +375,87 @@ HTML_CONTENT = """
                     btn.innerText = "▶ 一括処理を実行";
                 }
 
-                // タスク描画
+                // タスク描画 (DOMの差分更新によるスクロール維持)
                 const tasksDiv = document.getElementById('tasks');
-                tasksDiv.innerHTML = data.tasks.map(t => {
-                    let color = 'bg-slate-200 text-slate-600'; // 待機
-                    if (t.statusCode === 1) color = 'bg-blue-100 text-blue-700 animate-pulse'; // 実行中
-                    else if (t.statusCode === 2) color = 'bg-emerald-100 text-emerald-700'; // 完了
-                    else if (t.statusCode === 4) color = 'bg-purple-100 text-purple-700'; // 詳細解析
-                    else if (t.statusCode === 3 || t.statusCode === 5) color = 'bg-rose-100 text-rose-700'; // エラー/破綻
+                data.tasks.forEach(t => {
+                    const cardId = `task-card-${t.id}`;
+                    let cardEl = document.getElementById(cardId);
+                    
+                    // 状態変化を検知するためのハッシュ（ステータス、サイズ、抽出データ）
+                    const stateHash = `${t.statusCode}-${t.size}-${JSON.stringify(t.extracted || {})}`;
 
-                    // 抽出データのHTML生成
-                    let extHtml = '';
-                    if (t.extracted) {
-                        if (t.extracted.title !== undefined) {
-                            extHtml += `<div class="text-slate-800 font-bold text-sm mb-1 line-clamp-2">📃 ${t.extracted.title}</div>`;
-                        }
-                        if (t.extracted.h1 !== undefined) {
-                            extHtml += `<div class="text-slate-600 text-xs mb-1 truncate">📌 <span class="font-semibold">H1:</span> ${t.extracted.h1}</div>`;
-                        }
-                        if (t.extracted.description !== undefined) {
-                            extHtml += `<div class="text-slate-500 text-xs mb-2 line-clamp-3">📝 ${t.extracted.description}</div>`;
-                        }
-                        if (t.extracted.links && t.extracted.links.length > 0) {
-                            extHtml += `<div class="mt-2 pt-2 border-t border-slate-100 text-xs">
-                                <div class="font-bold text-slate-400 mb-1">🔗 リンク:</div>
-                                ${t.extracted.links.map(l => `<div class="truncate text-indigo-500 hover:underline"><a href="${l}" target="_blank">${l}</a></div>`).join('')}
-                            </div>`;
-                        }
-                        if (t.extracted.images && t.extracted.images.length > 0) {
-                            extHtml += `<div class="mt-2 pt-2 border-t border-slate-100 text-xs">
-                                <div class="font-bold text-slate-400 mb-1">🖼️ 画像:</div>
-                                ${t.extracted.images.map(l => `<div class="truncate text-teal-500 hover:underline"><a href="${l}" target="_blank">${l}</a></div>`).join('')}
-                            </div>`;
-                        }
+                    // 要素がなければ新規作成
+                    if (!cardEl) {
+                        cardEl = document.createElement('div');
+                        cardEl.id = cardId;
+                        cardEl.className = "bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md transition";
+                        tasksDiv.appendChild(cardEl);
                     }
 
-                    return `<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md transition">
-                        <div class="flex justify-between items-start mb-3 pb-2 border-b border-slate-100">
-                            <span class="truncate font-medium text-xs text-slate-500 w-2/3" title="${t.url}">${t.url}</span>
-                            <div class="flex flex-col items-end gap-1">
-                                <span class="px-2 py-0.5 rounded text-[10px] font-bold ${color}">${t.status}</span>
-                                ${t.size > 0 ? `<span class="text-slate-400 text-[10px]">${(t.size/1024).toFixed(1)} KB</span>` : ''}
+                    // 状態が変わった場合のみHTMLを更新（これでテキストエリアのスクロールや選択が維持される）
+                    if (cardEl.dataset.stateHash !== stateHash) {
+                        cardEl.dataset.stateHash = stateHash;
+
+                        let color = 'bg-slate-200 text-slate-600'; // 待機
+                        if (t.statusCode === 1) color = 'bg-blue-100 text-blue-700 animate-pulse'; // 実行中
+                        else if (t.statusCode === 2) color = 'bg-emerald-100 text-emerald-700'; // 完了
+                        else if (t.statusCode === 4) color = 'bg-purple-100 text-purple-700'; // 詳細解析
+                        else if (t.statusCode === 3 || t.statusCode === 5) color = 'bg-rose-100 text-rose-700'; // エラー/破綻
+
+                        // 抽出データのHTML生成
+                        let extHtml = '';
+                        if (t.extracted) {
+                            if (t.extracted.title !== undefined) {
+                                extHtml += `<div class="text-slate-800 font-bold text-sm mb-1 line-clamp-2">📃 ${t.extracted.title}</div>`;
+                            }
+                            if (t.extracted.h1 !== undefined) {
+                                extHtml += `<div class="text-slate-600 text-xs mb-1 truncate">👑 <span class="font-semibold">H1:</span> ${t.extracted.h1}</div>`;
+                            }
+                            if (t.extracted.h2 && t.extracted.h2.length > 0) {
+                                extHtml += `<div class="text-slate-600 text-xs mb-1 truncate">📌 <span class="font-semibold">H2:</span> ${t.extracted.h2.join(' / ')}</div>`;
+                            }
+                            if (t.extracted.description !== undefined) {
+                                extHtml += `<div class="text-slate-500 text-xs mb-1 line-clamp-2">📝 <span class="font-semibold">Desc:</span> ${t.extracted.description}</div>`;
+                            }
+                            if (t.extracted.keywords !== undefined && t.extracted.keywords !== "") {
+                                extHtml += `<div class="text-slate-500 text-xs mb-2 truncate">🏷️ <span class="font-semibold">Keywords:</span> ${t.extracted.keywords}</div>`;
+                            }
+                            if (t.extracted.body_text !== undefined) {
+                                // 本文の全文表示用スクロールコンテナ
+                                extHtml += `<div class="bg-slate-50 border border-slate-200 p-3 rounded text-slate-600 text-xs mb-2 max-h-48 overflow-y-auto custom-scrollbar whitespace-pre-line leading-relaxed shadow-inner font-serif">📄 ${t.extracted.body_text}</div>`;
+                            }
+
+                            // リンクと画像を横並びレイアウトに変更
+                            let gridHtml = '';
+                            if (t.extracted.links && t.extracted.links.length > 0) {
+                                gridHtml += `<div>
+                                    <div class="font-bold text-slate-400 mb-1">🔗 リンク:</div>
+                                    ${t.extracted.links.map(l => `<div class="truncate text-indigo-500 hover:underline"><a href="${l}" target="_blank">${l}</a></div>`).join('')}
+                                </div>`;
+                            }
+                            if (t.extracted.images && t.extracted.images.length > 0) {
+                                gridHtml += `<div>
+                                    <div class="font-bold text-slate-400 mb-1">🖼️ 画像:</div>
+                                    ${t.extracted.images.map(l => `<div class="truncate text-teal-500 hover:underline"><a href="${l}" target="_blank">${l}</a></div>`).join('')}
+                                </div>`;
+                            }
+                            if (gridHtml) {
+                                extHtml += `<div class="mt-2 pt-2 border-t border-slate-100 text-xs grid grid-cols-2 gap-2">${gridHtml}</div>`;
+                            }
+                        }
+
+                        cardEl.innerHTML = `
+                            <div class="flex justify-between items-start mb-3 pb-2 border-b border-slate-100">
+                                <span class="truncate font-medium text-xs text-slate-500 w-2/3" title="${t.url}">${t.url}</span>
+                                <div class="flex flex-col items-end gap-1">
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${color}">${t.status}</span>
+                                    ${t.size > 0 ? `<span class="text-slate-400 text-[10px]">${(t.size/1024).toFixed(1)} KB</span>` : ''}
+                                </div>
                             </div>
-                        </div>
-                        ${extHtml || '<div class="text-slate-400 text-xs italic">データ未取得</div>'}
-                    </div>`;
-                }).join('');
+                            ${extHtml || '<div class="text-slate-400 text-xs italic">データ未取得</div>'}
+                        `;
+                    }
+                });
 
                 // ドメインペナルティ描画
                 const ruinDiv = document.getElementById('ruin-scores');
