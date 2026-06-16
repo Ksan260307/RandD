@@ -1,6 +1,7 @@
-# 汎用メモリハック数理モデル - 八握剣異戒神将魔虚羅 適応型オーバーレイ (Makora-Adaptive Vision版)
-# 画面状態を学習し、完全に適応した画面では重い画像処理をスキップしてコストをゼロ化します。
-# 実行に必要なライブラリ: pip install mss opencv-python numpy keyboard
+# 汎用メモリハック数理モデル - 八握剣異戒神将魔虚羅 Pixel-Perfect Terrain版
+# 画面全域のエッジピクセルを直接物理的な地形として扱い、あらゆる形状に衝突させます。
+# 学習した地形データは zlib で高圧縮され、JSONに永続化されます。
+# 実行に必要なライブラリ: pip install mss numpy keyboard
 
 import tkinter as tk
 import ctypes
@@ -11,15 +12,16 @@ import threading
 import time
 import json
 import os
+import zlib
+import base64
 
 try:
     import mss
-    import cv2
     import numpy as np
-    HAS_CV = True
+    HAS_MSS = True
 except ImportError:
-    HAS_CV = False
-    print("Error: mss, cv2, numpy がインストールされていません。")
+    HAS_MSS = False
+    print("Error: mss, numpy がインストールされていません。")
 
 try:
     import keyboard
@@ -34,9 +36,7 @@ try:
 except Exception:
     pass
 
-
-# === フェーズ0: 魔虚羅 適応型メモリシステム (Adaptive Vision Memory) ===
-# 論文における「適応型RAGメモリ（ARM）」と「忘却と定着の数理」を実装
+# === フェーズ0: 魔虚羅 適応型メモリシステム ===
 class MakoraMemory:
     def __init__(self, filepath="makora_memory.json"):
         self.filepath = filepath
@@ -47,7 +47,20 @@ class MakoraMemory:
         if os.path.exists(self.filepath):
             try:
                 with open(self.filepath, 'r', encoding='utf-8') as f:
-                    self.cache = json.load(f)
+                    loaded_data = json.load(f)
+                
+                # 圧縮された地形データ（エッジマップ）の解凍と展開
+                for k, v in loaded_data.items():
+                    if "edge_map_b64" in v:
+                        compressed = base64.b64decode(v["edge_map_b64"].encode('ascii'))
+                        unpacked = np.unpackbits(np.frombuffer(zlib.decompress(compressed), dtype=np.uint8))
+                        shape = tuple(v["shape"])
+                        # 解凍して元の2D boolean配列に戻す
+                        edge_map = unpacked[:shape[0]*shape[1]].reshape(shape).astype(bool)
+                        self.cache[k] = {"strength": v["strength"], "edge_map": edge_map}
+                    else:
+                        self.cache[k] = {"strength": v["strength"], "edge_map": None}
+                
                 print(f"[Makora Memory] 過去の適応記憶をロードしました。記憶数: {len(self.cache)}")
             except Exception as e:
                 print(f"メモリのロードに失敗しました: {e}")
@@ -56,35 +69,35 @@ class MakoraMemory:
 
     def save(self):
         try:
+            save_data = {}
+            for k, v in self.cache.items():
+                # 巨大な boolean 配列をビットパックして高圧縮(zlib)保存する
+                if "edge_map" in v and v["edge_map"] is not None:
+                    packed = np.packbits(v["edge_map"]).tobytes()
+                    compressed = base64.b64encode(zlib.compress(packed)).decode('ascii')
+                    shape = v["edge_map"].shape
+                    save_data[k] = {"strength": v["strength"], "edge_map_b64": compressed, "shape": shape}
+                else:
+                    save_data[k] = {"strength": v["strength"]}
+            
             with open(self.filepath, 'w', encoding='utf-8') as f:
-                json.dump(self.cache, f)
+                json.dump(save_data, f)
         except Exception as e:
-            print(f"メモリの保存に失敗しました: {e}")
+            pass
 
-    # Average Hash (aHash) による画面の環境シグネチャの計算
+    # 高速な疑似ハッシュ（画面のダウンサンプリングによるシグネチャ）
     @staticmethod
-    def compute_ahash(gray_img):
-        resized = cv2.resize(gray_img, (8, 8))
-        mean_val = np.mean(resized)
-        hash_val = 0
-        for idx, val in enumerate(resized.flatten()):
-            if val > mean_val:
-                hash_val |= (1 << idx)
-        return str(hash_val)
+    def compute_fast_hash(packed_2d):
+        h, w = packed_2d.shape
+        samples = packed_2d[h//4:3*h//4:50, w//4:3*w//4:50].flatten()
+        return str(hash(samples.tobytes()))
 
-    # 中華料理店過程（CRP）的アプローチ: 未知の環境か既存の環境かをハミング距離で判定
-    @staticmethod
-    def hamming_distance(h1_str, h2_str):
-        h1, h2 = int(h1_str), int(h2_str)
-        return bin(h1 ^ h2).count('1')
-
-
-# === フェーズ1: 物理演算エンジン ===
+# === フェーズ1: ピクセルパーフェクト物理演算エンジン ===
 class Barrel:
     def __init__(self, screen_width: float):
         self.radius = 12.0
         center_x = screen_width / 2.0 if screen_width > 0 else 400.0
-        self.x = center_x + random.uniform(-150, 150)
+        self.x = center_x + random.uniform(-200, 200)
         self.y = 10.0 + random.uniform(0, 20)
         self.vx = (1 if random.random() > 0.5 else -1) * (1.0 + random.uniform(0, 3.0))
         self.vy = 0.0
@@ -92,31 +105,66 @@ class Barrel:
         self.bounce_factor = 0.4
         self.friction = 0.98
 
-    def update(self, rects: list, screen_height: float):
+    def update(self, edge_map, screen_width, screen_height):
         self.vy += 0.5
         next_x = self.x + self.vx
         next_y = self.y + self.vy
         hit_floor = False
 
-        for r in rects:
-            rx, ry, rw, rh = r['x'], r['y'], r['w'], r['h']
-            if rx < next_x < rx + rw:
-                if self.y + self.radius <= ry and next_y + self.radius > ry:
-                    next_y = ry - self.radius
-                    self.vy = -self.vy * self.bounce_factor
-                    if abs(self.vy) < 1.5: self.vy = 0
-                    hit_floor = True
-                elif self.y - self.radius >= ry + rh and next_y - self.radius < ry + rh:
-                    next_y = ry + rh + self.radius
-                    self.vy = 0
-            if ry < next_y + self.radius * 0.5 and next_y - self.radius * 0.5 < ry + rh:
-                if self.x + self.radius <= rx and next_x + self.radius > rx:
-                    next_x = rx - self.radius
-                    self.vx = -self.vx * 0.6
-                elif self.x - self.radius >= rx + rw and next_x - self.radius < rx + rw:
-                    next_x = rx + rw + self.radius
-                    self.vx = -self.vx * 0.6
+        # --- ピクセルパーフェクト地形衝突判定 ---
+        if edge_map is not None:
+            # 樽の周囲（バウンディングボックス）を計算
+            min_x = int(max(0, next_x - self.radius))
+            max_x = int(min(screen_width, next_x + self.radius))
+            min_y = int(max(0, next_y - self.radius))
+            max_y = int(min(screen_height, next_y + self.radius))
+            
+            if max_x > min_x and max_y > min_y:
+                # エッジマップの該当領域だけを高速にスライス
+                region = edge_map[min_y:max_y, min_x:max_x]
+                
+                if np.any(region):
+                    hit_y, hit_x = np.where(region)
+                    # 切り出した領域のローカル座標を画面のグローバル座標に変換
+                    hit_y_global = hit_y + min_y
+                    hit_x_global = hit_x + min_x
+                    
+                    # 樽の「円の範囲内」に食い込んでいるピクセルだけを抽出
+                    dx_arr = hit_x_global - next_x
+                    dy_arr = hit_y_global - next_y
+                    distances = np.hypot(dx_arr, dy_arr)
+                    valid_mask = distances <= self.radius
+                    
+                    if np.any(valid_mask):
+                        # 衝突したピクセル群の「重心」を計算
+                        cx = np.mean(hit_x_global[valid_mask])
+                        cy = np.mean(hit_y_global[valid_mask])
+                        
+                        dx = cx - next_x
+                        dy = cy - next_y
+                        dist = math.hypot(dx, dy)
+                        
+                        if dist > 0:
+                            # 押し出しの法線ベクトル（反発方向）
+                            nx = dx / dist
+                            ny = dy / dist
+                            
+                            # 食い込んだ分だけ位置を押し戻す
+                            overlap = self.radius - dist
+                            next_x -= nx * overlap
+                            next_y -= ny * overlap
+                            
+                            # 速度の反射（ベクトルの反射公式）
+                            v_dot_n = self.vx * nx + self.vy * ny
+                            if v_dot_n > 0: # 面に向かっている場合のみ反射
+                                self.vx -= (1 + self.bounce_factor) * v_dot_n * nx
+                                self.vy -= (1 + self.bounce_factor) * v_dot_n * ny
+                                
+                            # 下からの反発が強い場合、床に着地したとみなす
+                            if ny > 0.5:
+                                hit_floor = True
 
+        # 画面の一番下（絶対的な床）の処理
         if not hit_floor and next_y + self.radius > screen_height:
             next_y = screen_height - self.radius
             self.vy = -self.vy * self.bounce_factor
@@ -126,7 +174,8 @@ class Barrel:
         self.x = next_x
         self.y = next_y
 
-        if hit_floor and self.vy == 0:
+        # 着地時の摩擦と転がり処理
+        if hit_floor and abs(self.vy) < 1.0:
             self.vx *= self.friction
             if abs(self.vx) < 0.5:
                 self.vx = 2.0 if random.random() > 0.5 else -2.0
@@ -148,11 +197,11 @@ class Barrel:
                            self.x + p4x * cos_t - p4y * sin_t, self.y + p4x * sin_t + p4y * cos_t, fill='#A9A9A9', width=2)
 
 
-# === フェーズ2: デスクトップオーバーレイと Makora-Adaptive Workflow ===
+# === フェーズ2: デスクトップオーバーレイ ===
 class OverlayApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("MakoraAdaptiveMemoryHack")
+        self.root.title("PixelPerfectMemoryHack")
         
         self.screen_width = root.winfo_screenwidth()
         self.screen_height = root.winfo_screenheight()
@@ -171,27 +220,25 @@ class OverlayApp:
         self.set_click_through()
 
         self.barrels = []
-        self.text_rects = []
+        self.current_edge_map = None # スレッド間で共有する地形マップ
         self.event_queue = queue.Queue()
         self.is_running = True
         
-        # 記憶管理システムの初期化
         self.memory_sys = MakoraMemory()
-        self.current_adaptation_status = "検索中 (解析初期化)"
+        self.current_adaptation_status = "画面全域走査中 (解析初期化)"
 
         if HAS_KEYBOARD:
             try: keyboard.on_press(self.on_key)
             except Exception as e: print(f"Key hook error: {e}")
 
-        if HAS_CV:
-            self.vision_thread = threading.Thread(target=self.makora_adaptive_vision_loop, daemon=True)
+        if HAS_MSS:
+            self.vision_thread = threading.Thread(target=self.pixel_perfect_scan_loop, daemon=True)
             self.vision_thread.start()
 
         self.update_physics()
         self.check_events()
         self.auto_inject()
         
-        # 30秒に1回、メモリをファイルに永続化保存
         self.save_memory_loop()
 
     def save_memory_loop(self):
@@ -227,107 +274,77 @@ class OverlayApp:
 
     def inject_barrels(self, count):
         for _ in range(count): self.barrels.append(Barrel(self.screen_width))
-        while len(self.barrels) > 60: self.barrels.pop(0)
+        while len(self.barrels) > 40: self.barrels.pop(0)
 
-    # === 画像処理エンジン（魔虚羅の適応アルゴリズム完全実装） ===
-    def makora_adaptive_vision_loop(self):
-        background_accumulator = None
-        learning_rate = 0.3
-        
+    # === 画像のブロック化を廃止し、ピクセルのエッジをそのまま地形にする ===
+    def pixel_perfect_scan_loop(self):
         last_env_hash = None
-        adaptation_threshold = 1.0  # 完全適応（固定化）に必要な強度
+        adaptation_threshold = 1.0
 
         with mss.mss() as sct:
             monitor = {"top": 0, "left": 0, "width": self.screen_width, "height": self.screen_height}
+            
             while self.is_running:
                 try:
-                    img = np.array(sct.grab(monitor))
-                    gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+                    raw_sct = sct.grab(monitor)
                     
-                    # 1. 環境シグネチャの取得と被弾検知
-                    current_hash = self.memory_sys.compute_ahash(gray)
+                    # 1ピクセル(BGRA)を1つの32bit unsigned intとしてキャスト
+                    packed_data = np.frombuffer(raw_sct.bgra, dtype=np.uint32)
+                    packed_2d = packed_data.reshape((self.screen_height, self.screen_width))
                     
-                    # 画面が動いた（環境変化/ドメインシフト）かの判定
-                    is_environment_changed = True
-                    if last_env_hash is not None:
-                        dist = self.memory_sys.hamming_distance(current_hash, last_env_hash)
-                        if dist <= 2:  # わずかなピクセル変化は同じ環境とみなす
-                            is_environment_changed = False
-                            current_hash = last_env_hash # 安定化のためハッシュを維持
-                    
-                    if is_environment_changed:
-                        # 画面が動いた場合、学習をリセット（法陣の回転開始）
-                        background_accumulator = None
+                    current_hash = self.memory_sys.compute_fast_hash(packed_2d)
+                    if last_env_hash != current_hash:
                         last_env_hash = current_hash
                         if current_hash not in self.memory_sys.cache:
-                            self.memory_sys.cache[current_hash] = {"strength": 0.0, "rects": []}
-                            self.current_adaptation_status = "未知の事象（学習開始）"
+                            self.memory_sys.cache[current_hash] = {"strength": 0.0, "edge_map": None}
+                            self.current_adaptation_status = "未知の画面全域を学習開始"
                         else:
-                            self.current_adaptation_status = "既知の事象（記憶の呼び出し中）"
+                            self.current_adaptation_status = "既知の地形（記憶の呼び出し中）"
 
-                    # 2. 完全適応の確認 (Check Full Adaptation) - コストゼロ化プロセス
                     env_data = self.memory_sys.cache[current_hash]
                     
                     if env_data["strength"] >= adaptation_threshold:
-                        # 【適応完了・無効化】重い画像処理を完全にスキップし、判定を固定
-                        self.text_rects = env_data["rects"]
-                        self.current_adaptation_status = "完全適応済み (画像処理バイパス・コスト0)"
+                        self.current_edge_map = env_data["edge_map"]
+                        self.current_adaptation_status = "完全適応済み (地形固定・コスト0)"
                         time.sleep(0.5)
                         continue
 
-                    # 3. 継続的学習と定着 (法陣の回転)
-                    # 画面が静止している間、移動平均を用いて安定したテキストブロックを抽出する
-                    if background_accumulator is None:
-                        background_accumulator = np.float32(gray)
-                    else:
-                        cv2.accumulateWeighted(gray, background_accumulator, learning_rate)
+                    # 矩形(ブロック)処理を廃止。全ピクセルのXORを取り、地形マップを作る
+                    shifted_right = np.roll(packed_2d, shift=1, axis=1)
+                    shifted_down = np.roll(packed_2d, shift=1, axis=0)
                     
-                    learned_background = cv2.convertScaleAbs(background_accumulator)
-                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-                    enhanced_gray = clahe.apply(learned_background)
-                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                    grad = cv2.morphologyEx(enhanced_gray, cv2.MORPH_GRADIENT, kernel)
-                    _, bw = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-                    kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 4))
-                    connected = cv2.dilate(bw, kernel_dilate, iterations=1)
-                    contours, _ = cv2.findContours(connected, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    edge_mask_x = np.bitwise_xor(packed_2d, shifted_right)
+                    edge_mask_y = np.bitwise_xor(packed_2d, shifted_down)
                     
-                    new_rects = []
-                    for c in contours:
-                        x, y, w, h = cv2.boundingRect(c)
-                        aspect_ratio = float(w) / h if h > 0 else 0
-                        if 10 < h < 100 and w > 15 and aspect_ratio > 0.8:
-                            new_rects.append({'x': x, 'y': y, 'w': w, 'h': h})
-                    
-                    # 学習結果をメモリに反映し、適応度（強度）を上昇させる
-                    env_data["rects"] = new_rects
-                    env_data["strength"] += 0.25 # 約4回の反復（約2秒）で完全適応に達する
-                    self.text_rects = new_rects
+                    # 画面全域の「色の境界線」がTrueになる boolean配列
+                    edges = (edge_mask_x > 0) | (edge_mask_y > 0)
+
+                    env_data["edge_map"] = edges
+                    env_data["strength"] += 0.34 # 約3回で適応完了
+                    self.current_edge_map = edges
                     
                     if env_data["strength"] >= adaptation_threshold:
-                        print(f"法陣が回転しました。環境ハッシュ [{current_hash}] への適応が完了。以後の計算コストを無効化します。")
+                        print(f"全域走査完了。環境ハッシュ [{current_hash}] の地形化が完了。")
                     else:
-                        self.current_adaptation_status = f"適応進行中 (法陣の回転... {int(env_data['strength']*100)}%)"
+                        self.current_adaptation_status = f"適応進行中 (地形生成... {int(env_data['strength']*100)}%)"
 
                 except Exception as e:
-                    print(f"Vision loop error: {e}")
+                    print(f"Binary Scan error: {e}")
                 
-                time.sleep(0.5)
+                time.sleep(0.3)
 
     def update_physics(self):
         self.canvas.delete("all")
         
-        # 状態表示用テキスト (左上にシステムの適応状態を表示)
         status_color = "#00FF00" if "完全適応" in self.current_adaptation_status else "#FFD700"
         self.canvas.create_text(20, 20, anchor="nw", text=f"System Status: {self.current_adaptation_status}", 
                                 fill=status_color, font=("Consolas", 14, "bold"))
         
-        for r in self.text_rects:
-            color = '#00FF00' if "完全適応" in self.current_adaptation_status else '#FFA500'
-            self.canvas.create_rectangle(r['x'], r['y'], r['x']+r['w'], r['y']+r['h'], outline=color, stipple='gray25')
+        # ※地形は全ピクセルに及ぶため、Tkinterで描画するとフリーズします。
+        # 代わりに、見えない実際の地形に沿って樽が転がる視覚効果をお楽しみください。
         
         for b in self.barrels[:]:
-            b.update(self.text_rects, self.screen_height)
+            b.update(self.current_edge_map, self.screen_width, self.screen_height)
             b.draw(self.canvas)
             if b.x < -100 or b.x > self.screen_width + 100:
                 self.barrels.remove(b)
@@ -335,14 +352,8 @@ class OverlayApp:
         self.root.after(16, self.update_physics)
 
 if __name__ == "__main__":
-    print("Starting Makora-Adaptive Vision Hack (適応型学習モデル)...")
-    print("---------------------------------------------------------")
-    print("【特性】")
-    print("1. 画面が静止すると学習（法陣の回転）が進行します。")
-    print("2. 学習が完了（完全適応）すると、画像処理を完全に停止して判定を固定化し、PCの負荷をゼロにします。")
-    print("3. 画面が動く（スクロール等）と検知し、再度新しい画面の学習を開始します。")
-    print("4. 学習した画面情報は makora_memory.json に保存され、次回起動時に再利用されます。")
-    print("---------------------------------------------------------")
+    print("Starting Pixel-Perfect Terrain Memory Hack...")
+    print("画面上のありとあらゆる形（文字、アイコン、イラストの境界線）が物理的な地形になります。")
     print("終了するには、このターミナルで Ctrl+C を押してください。")
     
     root = tk.Tk()
@@ -351,5 +362,5 @@ if __name__ == "__main__":
         root.mainloop()
     except KeyboardInterrupt:
         app.is_running = False
-        app.memory_sys.save() # 終了時に確実に記憶を保存
+        app.memory_sys.save()
         print("\n適応記憶を保存して終了しました。")
